@@ -688,14 +688,52 @@ interface Window {
 				error?: string;
 			}) => void,
 		) => () => void;
+		openParakeetExecutablePicker: () => Promise<{
+			success: boolean;
+			path?: string;
+			canceled?: boolean;
+			error?: string;
+		}>;
+		openParakeetModelPicker: () => Promise<{
+			success: boolean;
+			path?: string;
+			canceled?: boolean;
+			error?: string;
+		}>;
+		getParakeetModelStatus: () => Promise<{
+			success: boolean;
+			exists: boolean;
+			path?: string | null;
+			error?: string;
+		}>;
+		downloadParakeetModel: () => Promise<{
+			success: boolean;
+			path?: string;
+			alreadyDownloaded?: boolean;
+			error?: string;
+		}>;
+		deleteParakeetModel: () => Promise<{ success: boolean; error?: string }>;
+		onParakeetModelDownloadProgress: (
+			callback: (state: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				path?: string | null;
+				error?: string;
+				currentFile?: string;
+			}) => void,
+		) => () => void;
 		generateAutoCaptions: (options: {
 			videoPath: string;
+			engine?: "whisper" | "parakeet";
 			whisperExecutablePath?: string;
-			whisperModelPath: string;
+			whisperModelPath?: string;
+			parakeetExecutablePath?: string;
+			parakeetModelPath?: string;
 			language?: string;
 		}) => Promise<{
 			success: boolean;
 			cues?: AutoCaptionCue[];
+			engine?: "whisper" | "parakeet";
 			message?: string;
 			error?: string;
 		}>;

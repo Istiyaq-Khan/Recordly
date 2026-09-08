@@ -89,6 +89,15 @@ export function getBundledWhisperExecutableCandidates(): string[] {
 	return binaryNames.map((binaryName) => getPrebundledNativeHelperPath(binaryName));
 }
 
+export function getBundledSherpaOnnxExecutableCandidates(): string[] {
+	const binaryNames =
+		process.platform === "win32"
+			? ["sherpa-onnx-offline.exe", "sherpa-onnx.exe"]
+			: ["sherpa-onnx-offline", "sherpa-onnx"];
+
+	return binaryNames.map((binaryName) => getPrebundledNativeHelperPath(binaryName));
+}
+
 export function getNativeCaptureHelperBinaryPath(): string {
 	return path.join(app.getPath("userData"), "native-tools", "recordly-screencapturekit-helper");
 }

@@ -2,6 +2,12 @@ import path from "node:path";
 import { dialog, ipcMain } from "electron";
 import { generateAutoCaptionsFromVideo } from "../captions/generate";
 import {
+	deleteParakeetModel,
+	downloadParakeetModel,
+	getParakeetModelStatus,
+	sendParakeetModelDownloadProgress,
+} from "../captions/parakeet";
+import {
 	deleteWhisperSmallModel,
 	downloadWhisperSmallModel,
 	getWhisperSmallModelStatus,
@@ -10,6 +16,7 @@ import {
 import { LEGACY_PROJECT_FILE_EXTENSIONS, PROJECT_FILE_EXTENSION } from "../constants";
 import { hasProjectFileExtension, loadProjectFromPath } from "../project/manager";
 import { setCurrentProjectPath } from "../state";
+import type { AutoCaptionGenerateOptions } from "../types";
 import { approveUserPath, getRecordingsDir } from "../utils";
 
 const VIDEO_FILE_EXTENSIONS = ["webm", "mp4", "mov", "avi", "mkv"];
@@ -221,36 +228,134 @@ export function registerCaptionHandlers() {
 		}
 	});
 
-	ipcMain.handle(
-		"generate-auto-captions",
-		async (
-			_,
-			options: {
-				videoPath: string;
-				whisperExecutablePath: string;
-				whisperModelPath: string;
-				language?: string;
-			},
-		) => {
-			try {
-				const result = await generateAutoCaptionsFromVideo(options);
-				return {
-					success: true,
-					cues: result.cues,
-					message:
-						result.audioSourceLabel === "recording"
-							? `Generated ${result.cues.length} caption cues.`
-							: `Generated ${result.cues.length} caption cues from the ${result.audioSourceLabel}.`,
-				};
-			} catch (error) {
-				console.error("Failed to generate auto captions:", error);
-				return {
-					success: false,
-					error: String(error),
-					message:
-						error instanceof Error ? error.message : "Failed to generate auto captions",
-				};
+	ipcMain.handle("open-parakeet-executable-picker", async () => {
+		try {
+			const result = await dialog.showOpenDialog({
+				title: "Select sherpa-onnx Executable",
+				filters: [
+					{
+						name: "Executables",
+						extensions: process.platform === "win32" ? ["exe", "cmd", "bat"] : ["*"],
+					},
+					{ name: "All Files", extensions: ["*"] },
+				],
+				properties: ["openFile"],
+			});
+
+			if (result.canceled || result.filePaths.length === 0) {
+				return { success: false, canceled: true };
 			}
-		},
-	);
+
+			approveUserPath(result.filePaths[0]);
+			return { success: true, path: result.filePaths[0] };
+		} catch (error) {
+			console.error("Failed to open sherpa-onnx executable picker:", error);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("open-parakeet-model-picker", async () => {
+		try {
+			const result = await dialog.showOpenDialog({
+				title: "Select Parakeet Model Folder or File",
+				properties: ["openDirectory", "openFile"],
+				filters: [
+					{ name: "ONNX Models or Tokens", extensions: ["onnx", "txt"] },
+					{ name: "All Files", extensions: ["*"] },
+				],
+			});
+
+			if (result.canceled || result.filePaths.length === 0) {
+				return { success: false, canceled: true };
+			}
+
+			approveUserPath(result.filePaths[0]);
+			return { success: true, path: result.filePaths[0] };
+		} catch (error) {
+			console.error("Failed to open Parakeet model picker:", error);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("get-parakeet-model-status", async () => {
+		try {
+			return await getParakeetModelStatus();
+		} catch (error) {
+			return { success: false, exists: false, path: null, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("download-parakeet-model", async (event) => {
+		try {
+			const existing = await getParakeetModelStatus();
+			if (existing.exists && existing.path) {
+				sendParakeetModelDownloadProgress(event.sender, {
+					status: "downloaded",
+					progress: 100,
+					path: existing.path,
+				});
+				return { success: true, path: existing.path, alreadyDownloaded: true };
+			}
+
+			const modelPath = await downloadParakeetModel(event.sender);
+			return { success: true, path: modelPath };
+		} catch (error) {
+			console.error("Failed to download Parakeet model:", error);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("delete-parakeet-model", async (event) => {
+		try {
+			await deleteParakeetModel();
+			sendParakeetModelDownloadProgress(event.sender, {
+				status: "idle",
+				progress: 0,
+				path: null,
+			});
+			return { success: true };
+		} catch (error) {
+			console.error("Failed to delete Parakeet model:", error);
+			const status = await getParakeetModelStatus();
+			if (!status.exists) {
+				sendParakeetModelDownloadProgress(event.sender, {
+					status: "idle",
+					progress: 0,
+					path: null,
+				});
+				return { success: true };
+			}
+			sendParakeetModelDownloadProgress(event.sender, {
+				status: "error",
+				progress: 0,
+				path: null,
+				error: String(error),
+			});
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("generate-auto-captions", async (_, options: AutoCaptionGenerateOptions) => {
+		try {
+			const result = await generateAutoCaptionsFromVideo(options);
+			const engineLabel = result.engine === "parakeet" ? "Parakeet TDT" : "Whisper";
+			return {
+				success: true,
+				cues: result.cues,
+				engine: result.engine,
+				message:
+					result.audioSourceLabel === "recording"
+						? `Generated ${result.cues.length} caption cues via ${engineLabel}.`
+						: `Generated ${result.cues.length} caption cues from the ${result.audioSourceLabel} via ${engineLabel}.`,
+			};
+		} catch (error) {
+			console.error("Failed to generate auto captions:", error);
+			return {
+				success: false,
+				error: String(error),
+				message:
+					error instanceof Error ? error.message : "Failed to generate auto captions",
+			};
+		}
+	});
 }

@@ -20,6 +20,8 @@ interface UseAutoCaptionControllerParams {
 	videoSourcePath: string | null;
 	setVideoSourcePath: Dispatch<SetStateAction<string | null>>;
 	webcamSourcePath: string | null;
+	captionEngine?: "whisper" | "parakeet";
+	setCaptionEngine?: Dispatch<SetStateAction<"whisper" | "parakeet">>;
 	whisperExecutablePath: string | null;
 	setWhisperExecutablePath: Dispatch<SetStateAction<string | null>>;
 	whisperModelPath: string | null;
@@ -29,6 +31,16 @@ interface UseAutoCaptionControllerParams {
 	whisperModelDownloadStatus: DownloadStatus;
 	setWhisperModelDownloadStatus: Dispatch<SetStateAction<DownloadStatus>>;
 	setWhisperModelDownloadProgress: Dispatch<SetStateAction<number>>;
+	parakeetExecutablePath?: string | null;
+	setParakeetExecutablePath?: Dispatch<SetStateAction<string | null>>;
+	parakeetModelPath?: string | null;
+	setParakeetModelPath?: Dispatch<SetStateAction<string | null>>;
+	downloadedParakeetModelPath?: string | null;
+	setDownloadedParakeetModelPath?: Dispatch<SetStateAction<string | null>>;
+	parakeetModelDownloadStatus?: DownloadStatus;
+	setParakeetModelDownloadStatus?: Dispatch<SetStateAction<DownloadStatus>>;
+	parakeetModelDownloadProgress?: number;
+	setParakeetModelDownloadProgress?: Dispatch<SetStateAction<number>>;
 	isGeneratingCaptions: boolean;
 	setIsGeneratingCaptions: Dispatch<SetStateAction<boolean>>;
 	autoCaptionSettings: AutoCaptionSettings;
@@ -44,6 +56,8 @@ export function useAutoCaptionController({
 	videoSourcePath,
 	setVideoSourcePath,
 	webcamSourcePath,
+	captionEngine = "whisper",
+	setCaptionEngine,
 	whisperExecutablePath,
 	setWhisperExecutablePath,
 	whisperModelPath,
@@ -53,6 +67,16 @@ export function useAutoCaptionController({
 	whisperModelDownloadStatus,
 	setWhisperModelDownloadStatus,
 	setWhisperModelDownloadProgress,
+	parakeetExecutablePath = null,
+	setParakeetExecutablePath,
+	parakeetModelPath = null,
+	setParakeetModelPath,
+	downloadedParakeetModelPath = null,
+	setDownloadedParakeetModelPath,
+	parakeetModelDownloadStatus = "idle",
+	setParakeetModelDownloadStatus,
+	parakeetModelDownloadProgress = 0,
+	setParakeetModelDownloadProgress,
 	isGeneratingCaptions,
 	setIsGeneratingCaptions,
 	autoCaptionSettings,
@@ -96,6 +120,50 @@ export function useAutoCaptionController({
 		setWhisperModelDownloadProgress,
 		setWhisperModelDownloadStatus,
 		setWhisperModelPath,
+	]);
+
+	useEffect(() => {
+		if (
+			!setParakeetModelDownloadStatus ||
+			!setParakeetModelDownloadProgress ||
+			!setDownloadedParakeetModelPath ||
+			!setParakeetModelPath
+		)
+			return;
+
+		const unsubscribe = window.electronAPI.onParakeetModelDownloadProgress?.((state) => {
+			setParakeetModelDownloadStatus(state.status);
+			setParakeetModelDownloadProgress(state.progress);
+			if (state.status === "downloaded") {
+				setDownloadedParakeetModelPath(state.path ?? null);
+				setParakeetModelPath((current) => current ?? state.path ?? null);
+			} else if (state.status === "idle") {
+				setDownloadedParakeetModelPath(null);
+			} else if (state.status === "error" && state.error) {
+				toast.error(state.error);
+			}
+		});
+
+		void window.electronAPI.getParakeetModelStatus?.().then((result) => {
+			if (!result?.success) return;
+			if (result.exists && result.path) {
+				setDownloadedParakeetModelPath(result.path);
+				setParakeetModelPath((current) => current ?? result.path ?? null);
+				setParakeetModelDownloadStatus("downloaded");
+				setParakeetModelDownloadProgress(100);
+			} else {
+				setDownloadedParakeetModelPath(null);
+				setParakeetModelDownloadStatus("idle");
+				setParakeetModelDownloadProgress(0);
+			}
+		});
+
+		return () => unsubscribe?.();
+	}, [
+		setDownloadedParakeetModelPath,
+		setParakeetModelDownloadProgress,
+		setParakeetModelDownloadStatus,
+		setParakeetModelPath,
 	]);
 
 	const handlePickWhisperExecutable = useCallback(async () => {
@@ -153,6 +221,63 @@ export function useAutoCaptionController({
 		setWhisperModelPath,
 	]);
 
+	const handlePickParakeetExecutable = useCallback(async () => {
+		const result = await window.electronAPI.openParakeetExecutablePicker?.();
+		if (!result?.success || !result.path) return;
+		setParakeetExecutablePath?.(result.path);
+		toast.success("sherpa-onnx executable selected");
+	}, [setParakeetExecutablePath]);
+
+	const handleDownloadParakeetModel = useCallback(async () => {
+		if (parakeetModelDownloadStatus === "downloading") return;
+		setParakeetModelDownloadStatus?.("downloading");
+		setParakeetModelDownloadProgress?.(0);
+		const result = await window.electronAPI.downloadParakeetModel?.();
+		if (!result?.success) {
+			setParakeetModelDownloadStatus?.("error");
+			toast.error(result?.error || "Failed to download Parakeet model");
+			return;
+		}
+		if (result.path) {
+			setDownloadedParakeetModelPath?.(result.path);
+			setParakeetModelPath?.(result.path);
+		}
+	}, [
+		parakeetModelDownloadStatus,
+		setDownloadedParakeetModelPath,
+		setParakeetModelDownloadProgress,
+		setParakeetModelDownloadStatus,
+		setParakeetModelPath,
+	]);
+
+	const handlePickParakeetModel = useCallback(async () => {
+		const result = await window.electronAPI.openParakeetModelPicker?.();
+		if (!result?.success || !result.path) return;
+		setParakeetModelPath?.(result.path);
+		toast.success("Parakeet model selected");
+	}, [setParakeetModelPath]);
+
+	const handleDeleteParakeetModel = useCallback(async () => {
+		const result = await window.electronAPI.deleteParakeetModel?.();
+		if (!result?.success) {
+			toast.error(result?.error || "Failed to delete Parakeet model");
+			return;
+		}
+		setParakeetModelPath?.((current) =>
+			current === downloadedParakeetModelPath ? null : current,
+		);
+		setDownloadedParakeetModelPath?.(null);
+		setParakeetModelDownloadStatus?.("idle");
+		setParakeetModelDownloadProgress?.(0);
+		toast.success("Parakeet model deleted");
+	}, [
+		downloadedParakeetModelPath,
+		setDownloadedParakeetModelPath,
+		setParakeetModelDownloadProgress,
+		setParakeetModelDownloadStatus,
+		setParakeetModelPath,
+	]);
+
 	const handleGenerateAutoCaptions = useCallback(async () => {
 		if (captionGenerationInFlightRef.current || isGeneratingCaptions) return;
 		captionGenerationInFlightRef.current = true;
@@ -181,15 +306,26 @@ export function useAutoCaptionController({
 				setVideoSourcePath(sourcePath);
 				setVideoPath(await resolveVideoUrl(sourcePath));
 			}
-			if (!whisperModelPath) {
-				toast.error("Select a Whisper model or download the small model first");
-				return;
+
+			if (captionEngine === "parakeet") {
+				if (!parakeetModelPath) {
+					toast.error("Select a Parakeet model folder or download the model first");
+					return;
+				}
+			} else {
+				if (!whisperModelPath) {
+					toast.error("Select a Whisper model or download the small model first");
+					return;
+				}
 			}
 
 			const result = await window.electronAPI.generateAutoCaptions({
 				videoPath: sourcePath,
+				engine: captionEngine,
 				whisperExecutablePath: whisperExecutablePath ?? undefined,
-				whisperModelPath,
+				whisperModelPath: whisperModelPath ?? undefined,
+				parakeetExecutablePath: parakeetExecutablePath ?? undefined,
+				parakeetModelPath: parakeetModelPath ?? undefined,
 				language: autoCaptionSettings.language,
 			});
 			if (!result.success || !result.cues) {
@@ -210,7 +346,10 @@ export function useAutoCaptionController({
 		}
 	}, [
 		autoCaptionSettings.language,
+		captionEngine,
 		isGeneratingCaptions,
+		parakeetExecutablePath,
+		parakeetModelPath,
 		setAutoCaptionSettings,
 		setAutoCaptions,
 		setIsGeneratingCaptions,
@@ -233,10 +372,21 @@ export function useAutoCaptionController({
 	);
 
 	return {
+		captionEngine,
+		setCaptionEngine,
+		parakeetExecutablePath,
+		parakeetModelPath,
+		downloadedParakeetModelPath,
+		parakeetModelDownloadStatus,
+		parakeetModelDownloadProgress,
 		handlePickWhisperExecutable,
 		handleDownloadWhisperSmallModel,
 		handlePickWhisperModel,
 		handleDeleteWhisperSmallModel,
+		handlePickParakeetExecutable,
+		handlePickParakeetModel,
+		handleDownloadParakeetModel,
+		handleDeleteParakeetModel,
 		handleGenerateAutoCaptions,
 		handleSaveAutoCaptionEdit,
 	};

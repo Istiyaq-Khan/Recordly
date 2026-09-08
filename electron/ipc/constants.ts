@@ -20,6 +20,15 @@ export const WHISPER_MODEL_DOWNLOAD_URL =
 	"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin";
 export const WHISPER_MODEL_DIR = path.join(USER_DATA_PATH, "whisper");
 export const WHISPER_SMALL_MODEL_PATH = path.join(WHISPER_MODEL_DIR, "ggml-small.bin");
+export const PARAKEET_MODEL_DOWNLOAD_BASE_URL =
+	"https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main";
+export const PARAKEET_MODEL_DIR = path.join(USER_DATA_PATH, "parakeet");
+export const PARAKEET_MODEL_FILES = [
+	"encoder.int8.onnx",
+	"decoder.int8.onnx",
+	"joiner.int8.onnx",
+	"tokens.txt",
+] as const;
 export const COMPANION_AUDIO_LAYOUTS = [
 	{ platform: "mac" as const, systemSuffix: ".system.m4a", micSuffix: ".mic.m4a" },
 	{ platform: "win" as const, systemSuffix: ".system.wav", micSuffix: ".mic.wav" },

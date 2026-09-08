@@ -10,9 +10,8 @@ import { resolveRecordingSession } from "../project/session";
 import { getUsableCompanionAudioCandidates } from "../recording/diagnostics";
 import { normalizeVideoSourcePath } from "../utils";
 import { getCaptionCompanionAudioCandidates } from "./audioCandidates";
-import { parseSrtCues, parseWhisperJsonCues, shouldRetryWhisperWithoutJson } from "./parser";
-import { isMissingWindowsWhisperRuntimeDependency } from "./runtimeErrors";
 import { segmentCuesIntoPhrases } from "./segment";
+import { getTranscriptionEngine } from "./engine";
 import {
 	parseSilenceIntervals,
 	SILENCE_DETECT_MIN_S,
@@ -21,22 +20,6 @@ import {
 } from "./silence";
 
 const execFileAsync = promisify(execFile);
-
-async function executeWhisper(whisperExecutablePath: string, args: string[]) {
-	try {
-		await execFileAsync(whisperExecutablePath, args, {
-			timeout: 30 * 60 * 1000,
-			maxBuffer: 20 * 1024 * 1024,
-		});
-	} catch (error) {
-		if (isMissingWindowsWhisperRuntimeDependency(error)) {
-			throw new Error(
-				"Whisper could not start because the Microsoft Visual C++ x64 Redistributable is missing. Install it from https://aka.ms/vc14/vc_redist.x64.exe, then restart Recordly.",
-			);
-		}
-		throw error;
-	}
-}
 
 export async function ensureReadableFile(filePath: string, options?: { executable?: boolean }) {
 	await fs.access(filePath, fsConstants.R_OK);
@@ -212,8 +195,11 @@ export async function detectSilenceIntervals(options: {
 
 export async function generateAutoCaptionsFromVideo(options: {
 	videoPath: string;
+	engine?: "whisper" | "parakeet";
 	whisperExecutablePath?: string;
-	whisperModelPath: string;
+	whisperModelPath?: string;
+	parakeetExecutablePath?: string;
+	parakeetModelPath?: string;
 	language?: string;
 }) {
 	const ffmpegPath = getFfmpegBinaryPath();
@@ -222,19 +208,14 @@ export async function generateAutoCaptionsFromVideo(options: {
 		throw new Error("Missing source video path.");
 	}
 
-	const whisperExecutablePath = await resolveWhisperExecutablePath(options.whisperExecutablePath);
-	const whisperModelPath = path.resolve(options.whisperModelPath);
-	await ensureReadableFile(whisperExecutablePath, { executable: true });
-	await ensureReadableFile(whisperModelPath);
+	const engineType = options.engine ?? "whisper";
+	const transcriptionEngine = getTranscriptionEngine(engineType);
 
 	const tempBase = path.join(
 		app.getPath("temp"),
 		`recordly-captions-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 	);
 	const wavPath = `${tempBase}.wav`;
-	const outputBase = `${tempBase}-whisper`;
-	const srtPath = `${outputBase}.srt`;
-	const jsonPath = `${outputBase}.json`;
 
 	try {
 		const audioSource = await extractCaptionAudioSource({
@@ -243,64 +224,29 @@ export async function generateAutoCaptionsFromVideo(options: {
 			wavPath,
 		});
 
-		const language =
-			options.language && options.language.trim() ? options.language.trim() : "auto";
-		const whisperBaseArgs = [
-			"-m",
-			whisperModelPath,
-			"-f",
-			wavPath,
-			"-osrt",
-			"-of",
-			outputBase,
-			"-l",
-			language,
-			"-np",
-		];
+		const transcriptionResult = await transcriptionEngine.transcribe({
+			videoPath: normalizedVideoPath,
+			audioWavPath: wavPath,
+			language: options.language,
+			executablePath:
+				engineType === "parakeet"
+					? options.parakeetExecutablePath
+					: options.whisperExecutablePath,
+			modelPath:
+				engineType === "parakeet" ? options.parakeetModelPath : options.whisperModelPath,
+		});
 
-		let jsonEnabled = true;
-		try {
-			await executeWhisper(whisperExecutablePath, [...whisperBaseArgs, "-ojf"]);
-		} catch (error) {
-			if (!shouldRetryWhisperWithoutJson(error)) {
-				throw error;
-			}
-
-			jsonEnabled = false;
-			console.warn(
-				"[auto-captions] Whisper runtime does not support JSON full output, retrying with SRT only:",
-				error,
-			);
-			await executeWhisper(whisperExecutablePath, whisperBaseArgs);
-		}
-
-		const timedCues = jsonEnabled
-			? parseWhisperJsonCues(await fs.readFile(jsonPath, "utf-8"))
-			: [];
-		if (jsonEnabled && timedCues.length === 0) {
-			// JSON ran but yielded no word-timed cues (empty/malformed output). We fall back
-			// to SRT, which has no word timings — captions are then split by sentence text and
-			// silence rather than precise word timing. Surface it for diagnosis.
-			console.warn(
-				"[auto-captions] Whisper JSON produced no word-timed cues; falling back to SRT (no word timings).",
-			);
-		}
-		const cues =
-			timedCues.length > 0 ? timedCues : parseSrtCues(await fs.readFile(srtPath, "utf-8"));
+		const cues = transcriptionResult.cues;
 		if (cues.length === 0) {
-			throw new Error("Whisper completed, but no caption cues were produced.");
+			throw new Error(
+				`${transcriptionEngine.name} completed, but no caption cues were produced.`,
+			);
 		}
 
-		// Whisper cues run sentences together and don't break on pauses. Re-segment them
-		// into one caption per sentence/phrase using Whisper's own word stream (punctuation
-		// + pauses), backed by ground-truth acoustic silence (ffmpeg `silencedetect`).
-		// Failure here must not block caption generation — fall back to raw.
+		// Re-segment raw cues into phrases using ground-truth acoustic silence
 		let cuesToReturn = cues;
 		try {
 			const silences = await detectSilenceIntervals({ ffmpegPath, wavPath });
-			// An empty result is a valid resegmentation (e.g. every transcribed word fell
-			// inside a long detected silence and was dropped as a hallucination), so take it
-			// as-is. Only a thrown exception should fall back to the raw cues.
 			cuesToReturn = segmentCuesIntoPhrases(cues, silences);
 		} catch (error) {
 			console.warn(
@@ -312,12 +258,9 @@ export async function generateAutoCaptionsFromVideo(options: {
 		return {
 			cues: cuesToReturn,
 			audioSourceLabel: audioSource.label,
+			engine: engineType,
 		};
 	} finally {
-		await Promise.allSettled([
-			fs.rm(wavPath, { force: true }),
-			fs.rm(srtPath, { force: true }),
-			fs.rm(jsonPath, { force: true }),
-		]);
+		await fs.rm(wavPath, { force: true }).catch(() => undefined);
 	}
 }

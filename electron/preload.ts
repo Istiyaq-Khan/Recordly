@@ -715,10 +715,50 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("whisper-small-model-download-progress", listener);
 		return () => ipcRenderer.removeListener("whisper-small-model-download-progress", listener);
 	},
+	openParakeetExecutablePicker: () => {
+		return ipcRenderer.invoke("open-parakeet-executable-picker");
+	},
+	openParakeetModelPicker: () => {
+		return ipcRenderer.invoke("open-parakeet-model-picker");
+	},
+	getParakeetModelStatus: () => {
+		return ipcRenderer.invoke("get-parakeet-model-status");
+	},
+	downloadParakeetModel: () => {
+		return ipcRenderer.invoke("download-parakeet-model");
+	},
+	deleteParakeetModel: () => {
+		return ipcRenderer.invoke("delete-parakeet-model");
+	},
+	onParakeetModelDownloadProgress: (
+		callback: (state: {
+			status: "idle" | "downloading" | "downloaded" | "error";
+			progress: number;
+			path?: string | null;
+			error?: string;
+			currentFile?: string;
+		}) => void,
+	) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			payload: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				path?: string | null;
+				error?: string;
+				currentFile?: string;
+			},
+		) => callback(payload);
+		ipcRenderer.on("parakeet-model-download-progress", listener);
+		return () => ipcRenderer.removeListener("parakeet-model-download-progress", listener);
+	},
 	generateAutoCaptions: (options: {
 		videoPath: string;
+		engine?: "whisper" | "parakeet";
 		whisperExecutablePath?: string;
-		whisperModelPath: string;
+		whisperModelPath?: string;
+		parakeetExecutablePath?: string;
+		parakeetModelPath?: string;
 		language?: string;
 	}) => {
 		return ipcRenderer.invoke("generate-auto-captions", options);
