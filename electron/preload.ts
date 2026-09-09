@@ -794,6 +794,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		parakeetExecutablePath?: string;
 		parakeetModelPath?: string;
 		language?: string;
+		clipStartMs?: number;
+		clipEndMs?: number;
+		startSec?: number;
+		durationSec?: number;
 	}) => {
 		return ipcRenderer.invoke("generate-auto-captions", options);
 	},

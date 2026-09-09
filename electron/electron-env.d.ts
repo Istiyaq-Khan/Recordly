@@ -763,6 +763,10 @@ interface Window {
 			parakeetExecutablePath?: string;
 			parakeetModelPath?: string;
 			language?: string;
+			clipStartMs?: number;
+			clipEndMs?: number;
+			startSec?: number;
+			durationSec?: number;
 		}) => Promise<{
 			success: boolean;
 			cues?: AutoCaptionCue[];

@@ -135,30 +135,33 @@ export async function probeAudioDuration(audioPath: string): Promise<number> {
 export function planAudioChunks(
 	durationSec: number,
 	silences: SilenceInterval[] = [],
+	startOffsetSec = 0,
 ): AudioChunk[] {
+	const startOffsetMs = Math.round(startOffsetSec * 1000);
 	if (durationSec <= MAX_SINGLE_PASS_DURATION_SEC) {
 		return [
 			{
 				index: 0,
-				startSec: 0,
-				endSec: durationSec,
+				startSec: startOffsetSec,
+				endSec: startOffsetSec + durationSec,
 				durationSec,
-				startMs: 0,
-				endMs: Math.round(durationSec * 1000),
+				startMs: startOffsetMs,
+				endMs: Math.round((startOffsetSec + durationSec) * 1000),
 				isSilenceBoundary: false,
 			},
 		];
 	}
 
 	const chunks: AudioChunk[] = [];
-	let cursor = 0;
+	let cursor = startOffsetSec;
+	const totalEndSec = startOffsetSec + durationSec;
 	let index = 0;
 
-	while (cursor < durationSec) {
-		const remainingSec = durationSec - cursor;
+	while (cursor < totalEndSec) {
+		const remainingSec = totalEndSec - cursor;
 		// If remaining audio fits within safe single-pass limit, finish in one final chunk
 		if (remainingSec <= MAX_SINGLE_PASS_DURATION_SEC) {
-			const endSec = durationSec;
+			const endSec = totalEndSec;
 			const duration = endSec - cursor;
 			chunks.push({
 				index,
@@ -436,13 +439,21 @@ export function mergeAndDeduplicateChunkCues(
 		const wordRuns: CaptionWordPayload[][] = chunkCuesList.map((chunkCues, chunkIndex) => {
 			const words: CaptionWordPayload[] = [];
 			const chunk = chunks[chunkIndex];
+			const chunkStartMs = chunk ? chunk.startMs : 0;
 			for (const cue of chunkCues) {
 				if (cue.words && cue.words.length > 0) {
-					words.push(...cue.words);
+					for (const word of cue.words) {
+						// Ensure word timestamps strictly anchor to chunk's absolute timeline offset
+						const needsOffset = chunkStartMs > 0 && word.startMs < chunkStartMs;
+						words.push({
+							...word,
+							startMs: needsOffset ? word.startMs + chunkStartMs : word.startMs,
+							endMs: needsOffset ? word.endMs + chunkStartMs : word.endMs,
+						});
+					}
 				} else if (cue.text?.trim()) {
 					// Chunks returning only wordless cues retain transcript text positioned by chunk.startMs
-					const chunkStartMs = chunk ? chunk.startMs : cue.startMs;
-					const chunkEndMs = chunk ? chunk.endMs : cue.endMs;
+					const chunkEndMs = chunk ? chunk.endMs : cue.endMs + chunkStartMs;
 					const tokens = cue.text.trim().split(/\s+/).filter(Boolean);
 					if (tokens.length > 0) {
 						const totalSpanMs = Math.max(
@@ -482,8 +493,15 @@ export function mergeAndDeduplicateChunkCues(
 	}
 
 	// Fallback for wordless captions
-	return allCues.map((cue, index) => ({
-		...cue,
-		id: `caption-${index + 1}`,
-	}));
+	return allCues.map((cue, index) => {
+		const chunk = chunks[index];
+		const chunkStartMs = chunk ? chunk.startMs : 0;
+		const needsOffset = chunkStartMs > 0 && cue.startMs < chunkStartMs;
+		return {
+			...cue,
+			id: `caption-${index + 1}`,
+			startMs: needsOffset ? cue.startMs + chunkStartMs : cue.startMs,
+			endMs: needsOffset ? cue.endMs + chunkStartMs : cue.endMs,
+		};
+	});
 }

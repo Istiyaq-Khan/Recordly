@@ -245,4 +245,8 @@ export type AutoCaptionGenerateOptions = {
 	parakeetExecutablePath?: string;
 	parakeetModelPath?: string;
 	language?: string;
+	clipStartMs?: number;
+	clipEndMs?: number;
+	startSec?: number;
+	durationSec?: number;
 };

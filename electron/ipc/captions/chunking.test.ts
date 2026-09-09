@@ -93,6 +93,45 @@ Input #0, wav, from 'sample.wav':
 			}
 			expect(chunks[chunks.length - 1].endSec).toBe(300.0);
 		});
+
+		it("handles startOffsetSec correctly for trimmed clips (e.g. 90 seconds / 90,000 ms)", () => {
+			const duration = 60.0;
+			const startOffsetSec = 90.0;
+			const chunks = planAudioChunks(duration, [], startOffsetSec);
+
+			expect(chunks.length).toBeGreaterThan(1);
+			expect(chunks[0].startSec).toBe(90.0);
+			expect(chunks[0].startMs).toBe(90_000);
+			expect(chunks[chunks.length - 1].endSec).toBe(150.0);
+			expect(chunks[chunks.length - 1].endMs).toBe(150_000);
+
+			for (const chunk of chunks) {
+				expect(chunk.startMs).toBe(Math.round(chunk.startSec * 1000));
+				expect(chunk.endMs).toBe(Math.round(chunk.endSec * 1000));
+				expect(chunk.durationSec).toBeLessThanOrEqual(24.5);
+			}
+		});
+
+		it("splits at detected silence boundaries when silence is within the window with startOffsetSec", () => {
+			const duration = 40.0;
+			const startOffsetSec = 90.0;
+			const silences: SilenceInterval[] = [{ startMs: 108_000, endMs: 109_000 }];
+
+			const chunks = planAudioChunks(duration, silences, startOffsetSec);
+			expect(chunks.length).toBe(2);
+
+			// First chunk should split at the midpoint of silence (108.5s = 108,500ms)
+			expect(chunks[0].startSec).toBe(90.0);
+			expect(chunks[0].startMs).toBe(90_000);
+			expect(chunks[0].endSec).toBeCloseTo(108.5, 2);
+			expect(chunks[0].endMs).toBe(108_500);
+			expect(chunks[0].isSilenceBoundary).toBe(true);
+
+			// Second chunk continues from silence split to 130.0s
+			expect(chunks[1].startSec).toBeCloseTo(108.5, 2);
+			expect(chunks[1].endSec).toBe(130.0);
+			expect(chunks[1].endMs).toBe(130_000);
+		});
 	});
 
 	describe("adjustCueOffsets", () => {
@@ -365,6 +404,115 @@ Input #0, wav, from 'sample.wav':
 			expect(mergedCues[0].words?.find((w) => w.text === "unsegmented")?.leadingSpace).toBe(
 				true,
 			);
+		});
+
+		it("anchors chunk cues and words to trimmed start offsets (e.g. 90,000 ms) instead of collapsing to 0 ms", () => {
+			const trimmedChunk0: AudioChunk = {
+				index: 0,
+				startSec: 90.0,
+				endSec: 110.0,
+				durationSec: 20.0,
+				startMs: 90_000,
+				endMs: 110_000,
+				isSilenceBoundary: false,
+			};
+			const trimmedChunk1: AudioChunk = {
+				index: 1,
+				startSec: 109.5,
+				endSec: 130.0,
+				durationSec: 20.5,
+				startMs: 109_500,
+				endMs: 130_000,
+				isSilenceBoundary: false,
+			};
+
+			// Cues from chunk 0 with chunk-local timestamps (or unadjusted timestamps starting near 0)
+			const chunk0Cues: CaptionCuePayload[] = [
+				{
+					id: "caption-1",
+					startMs: 500,
+					endMs: 1_500,
+					text: "trimmed audio",
+					words: [
+						{ text: "trimmed", startMs: 500, endMs: 1_000 },
+						{ text: "audio", startMs: 1_050, endMs: 1_500, leadingSpace: true },
+					],
+				},
+			];
+
+			// Cues from chunk 1 with chunk-local timestamps
+			const chunk1Cues: CaptionCuePayload[] = [
+				{
+					id: "caption-2",
+					startMs: 1_000,
+					endMs: 2_000,
+					text: "timeline sync",
+					words: [
+						{ text: "timeline", startMs: 1_000, endMs: 1_500 },
+						{ text: "sync", startMs: 1_550, endMs: 2_000, leadingSpace: true },
+					],
+				},
+			];
+
+			const mergedCues = mergeAndDeduplicateChunkCues(
+				[chunk0Cues, chunk1Cues],
+				[trimmedChunk0, trimmedChunk1],
+			);
+
+			expect(mergedCues.length).toBe(1);
+			expect(mergedCues[0].text).toBe("trimmed audio timeline sync");
+
+			const words = mergedCues[0].words;
+			expect(words).toBeDefined();
+			expect(words!.length).toBe(4);
+
+			// Chunk 0 words must anchor to 90,000+ ms, NOT 500 ms or 0 ms!
+			expect(words![0].text).toBe("trimmed");
+			expect(words![0].startMs).toBe(90_500);
+			expect(words![0].endMs).toBe(91_000);
+
+			expect(words![1].text).toBe("audio");
+			expect(words![1].startMs).toBe(91_050);
+			expect(words![1].endMs).toBe(91_500);
+
+			// Chunk 1 words must anchor to 109,500+ ms, NOT 1,000 ms!
+			expect(words![2].text).toBe("timeline");
+			expect(words![2].startMs).toBe(110_500);
+			expect(words![2].endMs).toBe(111_000);
+
+			expect(words![3].text).toBe("sync");
+			expect(words![3].startMs).toBe(111_050);
+			expect(words![3].endMs).toBe(111_500);
+
+			// Cue bounds must span from the first word to the last word in 90,000+ ms space
+			expect(mergedCues[0].startMs).toBe(90_500);
+			expect(mergedCues[0].endMs).toBe(111_500);
+		});
+
+		it("anchors wordless fallback cues to trimmed chunk start offsets", () => {
+			const trimmedChunk: AudioChunk = {
+				index: 0,
+				startSec: 90.0,
+				endSec: 105.0,
+				durationSec: 15.0,
+				startMs: 90_000,
+				endMs: 105_000,
+				isSilenceBoundary: false,
+			};
+
+			const rawCue: CaptionCuePayload[] = [
+				{
+					id: "caption-1",
+					startMs: 200,
+					endMs: 1_200,
+					text: "wordless cue",
+				},
+			];
+
+			const merged = mergeAndDeduplicateChunkCues([rawCue], [trimmedChunk]);
+			expect(merged.length).toBe(1);
+			expect(merged[0].startMs).toBe(90_200);
+			expect(merged[0].endMs).toBe(91_200);
 		});
 	});
 });

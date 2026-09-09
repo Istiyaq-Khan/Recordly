@@ -3,7 +3,12 @@ import { toast } from "sonner";
 import { resolveAutoCaptionSourcePath } from "../autoCaptionSource";
 import { type CaptionEditTarget, updateCaptionCuesForEditedTarget } from "../captionEditing";
 import { resolveVideoUrl } from "../projectPersistence";
-import type { AutoCaptionSettings, CaptionCue } from "../types";
+import {
+	type AutoCaptionSettings,
+	type CaptionCue,
+	type ClipRegion,
+	getClipSourceEndMs,
+} from "../types";
 import { getErrorMessage } from "../videoEditorUtils";
 
 type DownloadStatus = "idle" | "downloading" | "downloaded" | "error";
@@ -41,6 +46,7 @@ interface UseAutoCaptionControllerParams {
 	setParakeetModelDownloadStatus?: Dispatch<SetStateAction<DownloadStatus>>;
 	parakeetModelDownloadProgress?: number;
 	setParakeetModelDownloadProgress?: Dispatch<SetStateAction<number>>;
+	clipRegions?: ClipRegion[];
 	isGeneratingCaptions: boolean;
 	setIsGeneratingCaptions: Dispatch<SetStateAction<boolean>>;
 	autoCaptionSettings: AutoCaptionSettings;
@@ -83,6 +89,7 @@ export function useAutoCaptionController({
 	setAutoCaptionSettings,
 	setAutoCaptions,
 	syncActiveVideoSource,
+	clipRegions = [],
 }: UseAutoCaptionControllerParams) {
 	const captionGenerationInFlightRef = useRef(false);
 
@@ -366,6 +373,19 @@ export function useAutoCaptionController({
 				}
 			}
 
+			let clipStartMs: number | undefined;
+			let clipEndMs: number | undefined;
+			if (clipRegions.length > 0) {
+				const minStart = Math.min(...clipRegions.map((c) => c.startMs));
+				const maxEnd = Math.max(...clipRegions.map((c) => getClipSourceEndMs(c)));
+				if (minStart > 0) {
+					clipStartMs = minStart;
+				}
+				if (maxEnd > (clipStartMs ?? 0)) {
+					clipEndMs = maxEnd;
+				}
+			}
+
 			const result = await window.electronAPI.generateAutoCaptions({
 				videoPath: sourcePath,
 				engine: captionEngine,
@@ -374,6 +394,8 @@ export function useAutoCaptionController({
 				parakeetExecutablePath: parakeetExecutablePath ?? undefined,
 				parakeetModelPath: parakeetModelPath ?? undefined,
 				language: autoCaptionSettings.language,
+				clipStartMs,
+				clipEndMs,
 			});
 			if (!result.success || !result.cues) {
 				const errorMessage = result.error ? getErrorMessage(result.error) : result.message;
@@ -394,6 +416,7 @@ export function useAutoCaptionController({
 	}, [
 		autoCaptionSettings.language,
 		captionEngine,
+		clipRegions,
 		isGeneratingCaptions,
 		parakeetExecutablePath,
 		parakeetModelPath,
