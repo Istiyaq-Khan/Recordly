@@ -12,12 +12,7 @@ import { normalizeVideoSourcePath } from "../utils";
 import { getCaptionCompanionAudioCandidates } from "./audioCandidates";
 import { segmentCuesIntoPhrases } from "./segment";
 import { getTranscriptionEngine } from "./engine";
-import {
-	parseSilenceIntervals,
-	SILENCE_DETECT_MIN_S,
-	SILENCE_NOISE_DB,
-	type SilenceInterval,
-} from "./silence";
+import { detectSilenceIntervals } from "./silence";
 
 const execFileAsync = promisify(execFile);
 
@@ -169,29 +164,7 @@ export async function extractCaptionAudioSource(options: {
 	);
 }
 
-export async function detectSilenceIntervals(options: {
-	ffmpegPath: string;
-	wavPath: string;
-}): Promise<SilenceInterval[]> {
-	// ffmpeg writes silencedetect results to stderr; the null muxer just runs the filter.
-	const { stderr } = await execFileAsync(
-		options.ffmpegPath,
-		[
-			"-hide_banner",
-			"-nostats",
-			"-i",
-			options.wavPath,
-			"-af",
-			`silencedetect=noise=${SILENCE_NOISE_DB}dB:d=${SILENCE_DETECT_MIN_S}`,
-			"-f",
-			"null",
-			"-",
-		],
-		{ timeout: 5 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 },
-	);
-
-	return parseSilenceIntervals(stderr ?? "");
-}
+export { detectSilenceIntervals };
 
 export async function generateAutoCaptionsFromVideo(options: {
 	videoPath: string;

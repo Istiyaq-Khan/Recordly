@@ -7,7 +7,16 @@ import {
 	getBundledWhisperExecutableCandidates,
 } from "../paths/binaries";
 import type { CaptionCuePayload, CaptionEngineType } from "../types";
+import { getFfmpegBinaryPath } from "../ffmpeg/binary";
 import { ensureReadableFile, isExecutableFile } from "./generateUtils";
+import {
+	adjustCueOffsets,
+	MAX_SINGLE_PASS_DURATION_SEC,
+	mergeAndDeduplicateChunkCues,
+	planAudioChunks,
+	probeAudioDuration,
+	sliceAudioChunk,
+} from "./chunking";
 import {
 	ensureSherpaOnnxRuntimeBinary,
 	findExistingSherpaOnnxExecutable,
@@ -20,6 +29,7 @@ import {
 	shouldRetryWhisperWithoutJson,
 } from "./parser";
 import { isMissingWindowsWhisperRuntimeDependency } from "./runtimeErrors";
+import { detectSilenceIntervals } from "./silence";
 
 const execFileAsync = promisify(execFile);
 
@@ -262,34 +272,106 @@ export class ParakeetEngineAdapter implements ITranscriptionEngine {
 				: {}),
 		};
 
-		const args = [
-			`--encoder=${modelFiles.encoderPath}`,
-			`--decoder=${modelFiles.decoderPath}`,
-			`--joiner=${modelFiles.joinerPath}`,
-			`--tokens=${modelFiles.tokensPath}`,
-			"--num-threads=4",
-			"--decoding-method=greedy_search",
-			request.audioWavPath,
-		];
+		const runSherpaOnWav = async (wavPath: string): Promise<string> => {
+			const args = [
+				`--encoder=${modelFiles.encoderPath}`,
+				`--decoder=${modelFiles.decoderPath}`,
+				`--joiner=${modelFiles.joinerPath}`,
+				`--tokens=${modelFiles.tokensPath}`,
+				"--num-threads=4",
+				"--decoding-method=greedy_search",
+				wavPath,
+			];
 
-		let stdout = "";
-		try {
-			const result = await execFileAsync(sherpaExecutablePath, args, {
-				env,
-				timeout: 30 * 60 * 1000,
-				maxBuffer: 30 * 1024 * 1024,
-			});
-			stdout = result.stdout ?? "";
-		} catch (error) {
-			if (isMissingWindowsWhisperRuntimeDependency(error)) {
-				throw new Error(
-					"sherpa-onnx could not start because a required C++ / ONNX runtime dependency is missing.",
-				);
+			try {
+				const result = await execFileAsync(sherpaExecutablePath, args, {
+					env,
+					timeout: 30 * 60 * 1000,
+					maxBuffer: 30 * 1024 * 1024,
+				});
+				return result.stdout ?? "";
+			} catch (error) {
+				if (isMissingWindowsWhisperRuntimeDependency(error)) {
+					throw new Error(
+						"sherpa-onnx could not start because a required C++ / ONNX runtime dependency is missing.",
+					);
+				}
+				throw error;
 			}
-			throw error;
+		};
+
+		// 1. Inspect audio duration prior to calling sherpa-onnx-offline
+		let durationSec = 0;
+		try {
+			durationSec = await probeAudioDuration(request.audioWavPath);
+		} catch (error) {
+			console.warn(
+				"[auto-captions] Failed to probe audio duration, attempting single-pass fallback:",
+				error,
+			);
 		}
 
-		const cues = parseParakeetJsonOutput(stdout);
+		// 2. Single-pass transcription if duration <= 25 seconds (or if unprobed)
+		if (durationSec <= MAX_SINGLE_PASS_DURATION_SEC) {
+			const stdout = await runSherpaOnWav(request.audioWavPath);
+			const cues = parseParakeetJsonOutput(stdout);
+			if (cues.length === 0) {
+				throw new Error("Parakeet-TDT completed, but no caption cues were produced.");
+			}
+			return { cues, engine: "parakeet" };
+		}
+
+		// 3. Multi-chunk transcription if duration > 25 seconds
+		console.log(
+			`[auto-captions] Audio duration is ${durationSec.toFixed(1)}s (> ${MAX_SINGLE_PASS_DURATION_SEC}s). Slicing into consecutive chunks to avoid ONNX positional embedding overflow...`,
+		);
+
+		const ffmpegPath = getFfmpegBinaryPath();
+		const silences = await detectSilenceIntervals({
+			ffmpegPath,
+			wavPath: request.audioWavPath,
+		}).catch((err) => {
+			console.warn(
+				"[auto-captions] Silence detection before chunking failed, using fixed overlap fallback:",
+				err,
+			);
+			return [];
+		});
+
+		const chunks = planAudioChunks(durationSec, silences);
+		const tempChunkFiles: string[] = [];
+		const chunkCuesList: CaptionCuePayload[][] = [];
+
+		try {
+			for (const chunk of chunks) {
+				const tempChunkPath = path.join(
+					app.getPath("temp"),
+					`recordly-parakeet-chunk-${Date.now()}-${chunk.index}-${Math.random().toString(36).slice(2, 6)}.wav`,
+				);
+				tempChunkFiles.push(tempChunkPath);
+
+				await sliceAudioChunk({
+					ffmpegPath,
+					inputWavPath: request.audioWavPath,
+					outputWavPath: tempChunkPath,
+					startSec: chunk.startSec,
+					durationSec: chunk.durationSec,
+				});
+
+				const stdout = await runSherpaOnWav(tempChunkPath);
+				const rawCues = parseParakeetJsonOutput(stdout);
+				const adjusted = adjustCueOffsets(rawCues, chunk.startMs);
+				chunkCuesList.push(adjusted);
+			}
+		} finally {
+			// Clean up all temporary chunk audio files in the temp directory upon completion or error
+			await Promise.allSettled(
+				tempChunkFiles.map((chunkPath) => fs.rm(chunkPath, { force: true })),
+			);
+		}
+
+		// 4. Merge and deduplicate timestamped cues from all chunks sequentially
+		const cues = mergeAndDeduplicateChunkCues(chunkCuesList, chunks);
 		if (cues.length === 0) {
 			throw new Error("Parakeet-TDT completed, but no caption cues were produced.");
 		}

@@ -1,0 +1,268 @@
+import { describe, expect, it } from "vitest";
+import type { CaptionCuePayload, CaptionWordPayload } from "../types";
+import {
+	adjustCueOffsets,
+	MAX_SINGLE_PASS_DURATION_SEC,
+	mergeAndDeduplicateChunkCues,
+	mergeAndDeduplicateWords,
+	parseDurationFromFfmpegStderr,
+	planAudioChunks,
+	type AudioChunk,
+} from "./chunking";
+import type { SilenceInterval } from "./silence";
+
+describe("Parakeet Audio Chunking Utilities", () => {
+	describe("parseDurationFromFfmpegStderr", () => {
+		it("extracts duration correctly from FFmpeg stderr output", () => {
+			const stderr = `
+Input #0, wav, from 'sample.wav':
+  Duration: 00:01:23.45, bitrate: 256 kb/s
+  Stream #0:0: Audio: pcm_s16le
+`;
+			const duration = parseDurationFromFfmpegStderr(stderr);
+			expect(duration).toBeCloseTo(83.45, 2);
+		});
+
+		it("returns null for malformed or missing duration lines", () => {
+			expect(parseDurationFromFfmpegStderr("No duration here")).toBeNull();
+			expect(parseDurationFromFfmpegStderr("Duration: N/A")).toBeNull();
+		});
+	});
+
+	describe("planAudioChunks", () => {
+		it("keeps audio <= 25 seconds in a single pass", () => {
+			const chunks = planAudioChunks(22.5);
+			expect(chunks.length).toBe(1);
+			expect(chunks[0].startSec).toBe(0);
+			expect(chunks[0].endSec).toBe(22.5);
+			expect(chunks[0].durationSec).toBe(22.5);
+			expect(chunks[0].durationSec).toBeLessThanOrEqual(MAX_SINGLE_PASS_DURATION_SEC);
+		});
+
+		it("keeps audio of exactly 25.0 seconds in a single pass", () => {
+			const chunks = planAudioChunks(25.0);
+			expect(chunks.length).toBe(1);
+			expect(chunks[0].durationSec).toBe(25.0);
+		});
+
+		it("chunks audio > 25 seconds into chunks each strictly <= 24.5s (without silence)", () => {
+			const duration = 65.0; // 65 seconds
+			const chunks = planAudioChunks(duration);
+
+			expect(chunks.length).toBeGreaterThan(1);
+			for (const chunk of chunks) {
+				expect(chunk.durationSec).toBeLessThanOrEqual(24.5);
+				expect(chunk.startSec).toBeLessThan(chunk.endSec);
+			}
+
+			// Ensure first chunk starts at 0 and last chunk ends at total duration
+			expect(chunks[0].startSec).toBe(0);
+			expect(chunks[chunks.length - 1].endSec).toBe(duration);
+
+			// Check 0.5s overlap between consecutive non-silence chunks
+			for (let i = 1; i < chunks.length; i++) {
+				const prev = chunks[i - 1];
+				const curr = chunks[i];
+				expect(curr.startSec).toBeCloseTo(prev.endSec - 0.5, 2);
+			}
+		});
+
+		it("splits at detected silence boundaries when silence is within the window", () => {
+			const duration = 40.0;
+			const silences: SilenceInterval[] = [
+				{ startMs: 18_000, endMs: 19_000 }, // in [16s, 24.5s] window
+			];
+
+			const chunks = planAudioChunks(duration, silences);
+			expect(chunks.length).toBe(2);
+
+			// First chunk should split in the middle of silence (18.5s)
+			expect(chunks[0].endSec).toBeCloseTo(18.5, 2);
+			expect(chunks[0].isSilenceBoundary).toBe(true);
+
+			// Next chunk should start at 18.5s without needing a 0.5s overlap
+			expect(chunks[1].startSec).toBeCloseTo(18.5, 2);
+			expect(chunks[1].endSec).toBe(40.0);
+		});
+
+		it("handles long multi-minute audio (e.g. 300s) safely", () => {
+			const chunks = planAudioChunks(300.0);
+			expect(chunks.length).toBeGreaterThan(10);
+			for (const chunk of chunks) {
+				expect(chunk.durationSec).toBeLessThanOrEqual(24.5);
+			}
+			expect(chunks[chunks.length - 1].endSec).toBe(300.0);
+		});
+	});
+
+	describe("adjustCueOffsets", () => {
+		it("shifts startMs and endMs by the chunk offset", () => {
+			const rawCues: CaptionCuePayload[] = [
+				{
+					id: "caption-1",
+					startMs: 100,
+					endMs: 800,
+					text: "hello world",
+					words: [
+						{ text: "hello", startMs: 100, endMs: 400 },
+						{ text: "world", startMs: 450, endMs: 800, leadingSpace: true },
+					],
+				},
+			];
+
+			const adjusted = adjustCueOffsets(rawCues, 20_000);
+			expect(adjusted[0].startMs).toBe(20_100);
+			expect(adjusted[0].endMs).toBe(20_800);
+			expect(adjusted[0].words?.[0].startMs).toBe(20_100);
+			expect(adjusted[0].words?.[0].endMs).toBe(20_400);
+			expect(adjusted[0].words?.[1].startMs).toBe(20_450);
+			expect(adjusted[0].words?.[1].endMs).toBe(20_800);
+		});
+
+		it("returns unchanged cues when offset is 0", () => {
+			const rawCues: CaptionCuePayload[] = [
+				{ id: "caption-1", startMs: 0, endMs: 500, text: "hi" },
+			];
+			expect(adjustCueOffsets(rawCues, 0)).toBe(rawCues);
+		});
+	});
+
+	describe("mergeAndDeduplicateWords & mergeAndDeduplicateChunkCues", () => {
+		const dummyChunk0: AudioChunk = {
+			index: 0,
+			startSec: 0,
+			endSec: 20,
+			durationSec: 20,
+			startMs: 0,
+			endMs: 20_000,
+			isSilenceBoundary: false,
+		};
+
+		const dummyChunk1: AudioChunk = {
+			index: 1,
+			startSec: 19.5,
+			endSec: 39.5,
+			durationSec: 20,
+			startMs: 19_500,
+			endMs: 39_500,
+			isSilenceBoundary: false,
+		};
+
+		it("deduplicates identical words appearing in the overlap window", () => {
+			const chunk0Words: CaptionWordPayload[] = [
+				{ text: "hello", startMs: 18_000, endMs: 18_500 },
+				{ text: "world", startMs: 19_600, endMs: 19_900 },
+			];
+
+			const chunk1Words: CaptionWordPayload[] = [
+				{ text: "world", startMs: 19_620, endMs: 19_920 }, // duplicate
+				{ text: "again", startMs: 20_200, endMs: 20_600 },
+			];
+
+			const merged = mergeAndDeduplicateWords(
+				[chunk0Words, chunk1Words],
+				[dummyChunk0, dummyChunk1],
+			);
+
+			expect(merged.map((w) => w.text)).toEqual(["hello", "world", "again"]);
+			expect(merged.length).toBe(3);
+		});
+
+		it("replaces partial boundary words with complete words from the subsequent chunk", () => {
+			const chunk0Words: CaptionWordPayload[] = [
+				{ text: "learning", startMs: 18_000, endMs: 18_500 },
+				{ text: "rec", startMs: 19_600, endMs: 19_850 }, // cut-off word
+			];
+
+			const chunk1Words: CaptionWordPayload[] = [
+				{ text: "recordly", startMs: 19_610, endMs: 20_100 }, // full word with future context
+				{ text: "app", startMs: 20_200, endMs: 20_500 },
+			];
+
+			const merged = mergeAndDeduplicateWords(
+				[chunk0Words, chunk1Words],
+				[dummyChunk0, dummyChunk1],
+			);
+
+			expect(merged.map((w) => w.text)).toEqual(["learning", "recordly", "app"]);
+		});
+
+		it("seamlessly merges silence-boundary chunks without overlap", () => {
+			const silenceChunk0: AudioChunk = {
+				index: 0,
+				startSec: 0,
+				endSec: 18.5,
+				durationSec: 18.5,
+				startMs: 0,
+				endMs: 18_500,
+				isSilenceBoundary: true,
+			};
+
+			const silenceChunk1: AudioChunk = {
+				index: 1,
+				startSec: 18.5,
+				endSec: 35.0,
+				durationSec: 16.5,
+				startMs: 18_500,
+				endMs: 35_000,
+				isSilenceBoundary: true,
+			};
+
+			const chunk0Words: CaptionWordPayload[] = [
+				{ text: "first", startMs: 1_000, endMs: 1_500 },
+				{ text: "sentence", startMs: 1_600, endMs: 2_000 },
+			];
+
+			const chunk1Words: CaptionWordPayload[] = [
+				{ text: "second", startMs: 20_000, endMs: 20_500 },
+				{ text: "sentence", startMs: 20_600, endMs: 21_000 },
+			];
+
+			const merged = mergeAndDeduplicateWords(
+				[chunk0Words, chunk1Words],
+				[silenceChunk0, silenceChunk1],
+			);
+
+			expect(merged.map((w) => w.text)).toEqual(["first", "sentence", "second", "sentence"]);
+		});
+
+		it("builds unified cue with words for feeding into segmentCuesIntoPhrases", () => {
+			const chunk0Cues: CaptionCuePayload[] = [
+				{
+					id: "caption-1",
+					startMs: 0,
+					endMs: 19_900,
+					text: "hello world",
+					words: [
+						{ text: "hello", startMs: 18_000, endMs: 18_500 },
+						{ text: "world", startMs: 19_600, endMs: 19_900 },
+					],
+				},
+			];
+
+			const chunk1Cues: CaptionCuePayload[] = [
+				{
+					id: "caption-1",
+					startMs: 19_620,
+					endMs: 20_600,
+					text: "world again",
+					words: [
+						{ text: "world", startMs: 19_620, endMs: 19_920 },
+						{ text: "again", startMs: 20_200, endMs: 20_600 },
+					],
+				},
+			];
+
+			const mergedCues = mergeAndDeduplicateChunkCues(
+				[chunk0Cues, chunk1Cues],
+				[dummyChunk0, dummyChunk1],
+			);
+
+			expect(mergedCues.length).toBe(1);
+			expect(mergedCues[0].text).toBe("hello world again");
+			expect(mergedCues[0].words?.map((w) => w.text)).toEqual(["hello", "world", "again"]);
+			expect(mergedCues[0].startMs).toBe(18_000);
+			expect(mergedCues[0].endMs).toBe(20_600);
+		});
+	});
+});
