@@ -713,6 +713,27 @@ interface Window {
 			error?: string;
 		}>;
 		deleteParakeetModel: () => Promise<{ success: boolean; error?: string }>;
+		getParakeetRuntimeStatus: (preferredPath?: string | null) => Promise<{
+			success: boolean;
+			exists: boolean;
+			path?: string | null;
+			error?: string;
+		}>;
+		downloadSherpaOnnxRuntime: () => Promise<{
+			success: boolean;
+			path?: string;
+			alreadyDownloaded?: boolean;
+			error?: string;
+		}>;
+		onParakeetRuntimeDownloadProgress: (
+			callback: (state: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				path?: string | null;
+				error?: string;
+				currentFile?: string;
+			}) => void,
+		) => () => void;
 		onParakeetModelDownloadProgress: (
 			callback: (state: {
 				status: "idle" | "downloading" | "downloaded" | "error";

@@ -4,8 +4,11 @@ import { generateAutoCaptionsFromVideo } from "../captions/generate";
 import {
 	deleteParakeetModel,
 	downloadParakeetModel,
+	ensureSherpaOnnxRuntimeBinary,
 	getParakeetModelStatus,
+	getSherpaOnnxRuntimeStatus,
 	sendParakeetModelDownloadProgress,
+	sendParakeetRuntimeDownloadProgress,
 } from "../captions/parakeet";
 import {
 	deleteWhisperSmallModel,
@@ -273,6 +276,49 @@ export function registerCaptionHandlers() {
 			return { success: true, path: result.filePaths[0] };
 		} catch (error) {
 			console.error("Failed to open Parakeet model picker:", error);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("get-parakeet-runtime-status", async (_, preferredPath?: string | null) => {
+		try {
+			return await getSherpaOnnxRuntimeStatus(preferredPath);
+		} catch (error) {
+			return { success: false, exists: false, path: null, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("download-sherpa-onnx-runtime", async (event) => {
+		try {
+			const existing = await getSherpaOnnxRuntimeStatus();
+			if (existing.exists && existing.path) {
+				return { success: true, path: existing.path, alreadyDownloaded: true };
+			}
+
+			const binaryPath = await ensureSherpaOnnxRuntimeBinary((percent, currentFile) => {
+				sendParakeetRuntimeDownloadProgress(event.sender, {
+					status: "downloading",
+					progress: percent,
+					currentFile,
+					path: null,
+				});
+			});
+
+			sendParakeetRuntimeDownloadProgress(event.sender, {
+				status: "downloaded",
+				progress: 100,
+				path: binaryPath,
+			});
+
+			return { success: true, path: binaryPath };
+		} catch (error) {
+			console.error("Failed to download sherpa-onnx runtime:", error);
+			sendParakeetRuntimeDownloadProgress(event.sender, {
+				status: "error",
+				progress: 0,
+				path: null,
+				error: String(error),
+			});
 			return { success: false, error: String(error) };
 		}
 	});

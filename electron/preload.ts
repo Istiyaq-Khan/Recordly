@@ -730,6 +730,34 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	deleteParakeetModel: () => {
 		return ipcRenderer.invoke("delete-parakeet-model");
 	},
+	getParakeetRuntimeStatus: (preferredPath?: string | null) => {
+		return ipcRenderer.invoke("get-parakeet-runtime-status", preferredPath);
+	},
+	downloadSherpaOnnxRuntime: () => {
+		return ipcRenderer.invoke("download-sherpa-onnx-runtime");
+	},
+	onParakeetRuntimeDownloadProgress: (
+		callback: (state: {
+			status: "idle" | "downloading" | "downloaded" | "error";
+			progress: number;
+			path?: string | null;
+			error?: string;
+			currentFile?: string;
+		}) => void,
+	) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			payload: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				path?: string | null;
+				error?: string;
+				currentFile?: string;
+			},
+		) => callback(payload);
+		ipcRenderer.on("parakeet-runtime-download-progress", listener);
+		return () => ipcRenderer.removeListener("parakeet-runtime-download-progress", listener);
+	},
 	onParakeetModelDownloadProgress: (
 		callback: (state: {
 			status: "idle" | "downloading" | "downloaded" | "error";

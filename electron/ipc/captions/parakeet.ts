@@ -1,14 +1,31 @@
-import { createWriteStream } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { createWriteStream, existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { get as httpsGet } from "node:https";
 import path from "node:path";
+import { promisify } from "node:util";
+import { app } from "electron";
 import type Electron from "electron";
 import {
 	PARAKEET_MODEL_DIR,
 	PARAKEET_MODEL_DOWNLOAD_BASE_URL,
 	PARAKEET_MODEL_FILES,
+	SHERPA_ONNX_RUNTIME_ASSETS,
+	SHERPA_ONNX_RUNTIME_DIR,
 } from "../constants";
-import type { ParakeetModelDownloadProgress, ParakeetModelStatus } from "../types";
+import {
+	getBundledSherpaOnnxExecutableCandidates,
+	getNativeArchTag,
+	resolveUnpackedAppPath,
+} from "../paths/binaries";
+import type {
+	ParakeetModelDownloadProgress,
+	ParakeetModelStatus,
+	ParakeetRuntimeStatus,
+} from "../types";
+import { isExecutableFile } from "./generateUtils";
+
+const execFileAsync = promisify(execFile);
 
 export interface ResolvedParakeetModelPaths {
 	encoderPath: string;
@@ -23,6 +40,331 @@ export function sendParakeetModelDownloadProgress(
 	payload: ParakeetModelDownloadProgress,
 ) {
 	webContents.send("parakeet-model-download-progress", payload);
+}
+
+export function sendParakeetRuntimeDownloadProgress(
+	webContents: Electron.WebContents,
+	payload: {
+		status: "idle" | "downloading" | "downloaded" | "error";
+		progress: number;
+		path?: string | null;
+		error?: string;
+		currentFile?: string;
+	},
+) {
+	webContents.send("parakeet-runtime-download-progress", payload);
+}
+
+let activeSherpaDownloadPromise: Promise<string> | null = null;
+
+function getTarExecutablePath(): string {
+	if (process.platform === "win32") {
+		const system32Tar = path.join(
+			process.env["SystemRoot"] || "C:\\Windows",
+			"System32",
+			"tar.exe",
+		);
+		if (existsSync(system32Tar)) {
+			return system32Tar;
+		}
+	}
+	return "tar";
+}
+
+export async function findExistingSherpaOnnxExecutable(
+	preferredPath?: string | null,
+): Promise<string | null> {
+	const userHome = process.env["HOME"] || process.env["USERPROFILE"] || "";
+	const candidatePaths = [
+		preferredPath?.trim() || null,
+		...getBundledSherpaOnnxExecutableCandidates(),
+		process.env["SHERPA_ONNX_PATH"]?.trim() || null,
+		process.platform === "darwin" ? "/opt/homebrew/bin/sherpa-onnx-offline" : null,
+		process.platform === "darwin" ? "/usr/local/bin/sherpa-onnx-offline" : null,
+		process.platform === "linux" ? "/usr/local/bin/sherpa-onnx-offline" : null,
+		process.platform === "linux" ? "/usr/bin/sherpa-onnx-offline" : null,
+		process.platform === "linux" ? "/opt/sherpa-onnx/bin/sherpa-onnx-offline" : null,
+		userHome
+			? path.join(
+					userHome,
+					".local",
+					"bin",
+					process.platform === "win32" ? "sherpa-onnx-offline.exe" : "sherpa-onnx-offline",
+				)
+			: null,
+	].filter((value): value is string => Boolean(value));
+
+	for (const candidate of candidatePaths) {
+		const normalized = path.resolve(candidate);
+		if (await isExecutableFile(normalized)) {
+			return normalized;
+		}
+	}
+
+	const pathCommand = process.platform === "win32" ? "where" : "which";
+	const binaryNames =
+		process.platform === "win32"
+			? ["sherpa-onnx-offline.exe", "sherpa-onnx.exe"]
+			: ["sherpa-onnx-offline", "sherpa-onnx"];
+
+	for (const binaryName of binaryNames) {
+		const result = spawnSync(pathCommand, [binaryName], { encoding: "utf-8" });
+		if (result.status === 0) {
+			const resolvedPath = result.stdout
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.find(Boolean);
+
+			if (resolvedPath && (await isExecutableFile(resolvedPath))) {
+				return resolvedPath;
+			}
+		}
+	}
+
+	return null;
+}
+
+export async function getSherpaOnnxRuntimeStatus(
+	preferredPath?: string | null,
+): Promise<ParakeetRuntimeStatus> {
+	try {
+		const resolvedPath = await findExistingSherpaOnnxExecutable(preferredPath);
+		if (resolvedPath) {
+			return {
+				success: true,
+				exists: true,
+				path: resolvedPath,
+			};
+		}
+		return {
+			success: true,
+			exists: false,
+			path: null,
+			error: `No sherpa-onnx runtime found for ${process.platform}/${process.arch}.`,
+		};
+	} catch (error) {
+		return {
+			success: true,
+			exists: false,
+			path: null,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
+export async function ensureSherpaOnnxRuntimeBinary(
+	onProgress?: (percent: number, statusText: string) => void,
+): Promise<string> {
+	const existing = await findExistingSherpaOnnxExecutable();
+	if (existing) {
+		return existing;
+	}
+
+	if (activeSherpaDownloadPromise) {
+		return activeSherpaDownloadPromise;
+	}
+
+	activeSherpaDownloadPromise = (async () => {
+		const archTag = getNativeArchTag();
+		const asset = SHERPA_ONNX_RUNTIME_ASSETS[archTag];
+		if (!asset) {
+			throw new Error(
+				`No precompiled sherpa-onnx runtime asset is configured for platform/arch "${archTag}". Please install sherpa-onnx manually or specify its path.`,
+			);
+		}
+
+		onProgress?.(5, `Downloading sherpa-onnx runtime for ${archTag}...`);
+
+		const tempDir = path.join(
+			app.getPath("temp"),
+			`recordly-sherpa-runtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+		);
+		await fs.mkdir(tempDir, { recursive: true });
+
+		const archivePath = path.join(tempDir, asset.archiveName);
+
+		try {
+			await downloadSingleFile(asset.url, archivePath, (bytesReceived) => {
+				const estimatedTotal = 26 * 1024 * 1024;
+				const p = Math.min(60, Math.round((bytesReceived / estimatedTotal) * 60));
+				onProgress?.(
+					p,
+					`Downloading sherpa-onnx runtime (${(bytesReceived / 1024 / 1024).toFixed(1)} MB)...`,
+				);
+			});
+
+			onProgress?.(65, "Extracting sherpa-onnx runtime archive...");
+
+			const tarBin = getTarExecutablePath();
+			await execFileAsync(tarBin, ["-xf", archivePath, "-C", tempDir], {
+				timeout: 180_000,
+			});
+
+			onProgress?.(80, "Staging runtime libraries and binaries...");
+
+			const entries = await fs.readdir(tempDir, { withFileTypes: true });
+			const extractedDirEntry = entries.find(
+				(e) => e.isDirectory() && e.name.startsWith("sherpa-onnx"),
+			);
+			const extractedRootDir = extractedDirEntry
+				? path.join(tempDir, extractedDirEntry.name)
+				: tempDir;
+
+			// Target directories
+			const userDataDir = app.getPath("userData");
+			const userDataRuntimeDir = path.join(userDataDir, "runtime");
+			const targetBinDir = path.join(SHERPA_ONNX_RUNTIME_DIR, "bin");
+			const targetLibDir = path.join(SHERPA_ONNX_RUNTIME_DIR, "lib");
+			const directRuntimeBinDir = path.join(userDataRuntimeDir, "bin");
+
+			await fs.mkdir(SHERPA_ONNX_RUNTIME_DIR, { recursive: true });
+			await fs.mkdir(targetBinDir, { recursive: true });
+			await fs.mkdir(targetLibDir, { recursive: true });
+			await fs.mkdir(userDataRuntimeDir, { recursive: true });
+			await fs.mkdir(directRuntimeBinDir, { recursive: true });
+
+			const extractedBinDir = path.join(extractedRootDir, "bin");
+			const extractedLibDir = path.join(extractedRootDir, "lib");
+
+			const hasBin = await fs
+				.stat(extractedBinDir)
+				.then(() => true)
+				.catch(() => false);
+			const hasLib = await fs
+				.stat(extractedLibDir)
+				.then(() => true)
+				.catch(() => false);
+
+			if (hasBin) {
+				await fs.cp(extractedBinDir, targetBinDir, { recursive: true });
+			}
+			if (hasLib) {
+				await fs.cp(extractedLibDir, targetLibDir, { recursive: true });
+			}
+
+			// For Windows, collect all DLLs and ensure they are placed next to the binary in all targets
+			const dllFiles: Array<{ name: string; srcPath: string }> = [];
+			if (process.platform === "win32") {
+				if (hasLib) {
+					const libEntries = await fs.readdir(extractedLibDir).catch(() => [] as string[]);
+					for (const file of libEntries) {
+						if (file.toLowerCase().endsWith(".dll")) {
+							dllFiles.push({ name: file, srcPath: path.join(extractedLibDir, file) });
+						}
+					}
+				}
+				if (hasBin) {
+					const binEntries = await fs.readdir(extractedBinDir).catch(() => [] as string[]);
+					for (const file of binEntries) {
+						if (file.toLowerCase().endsWith(".dll")) {
+							if (!dllFiles.some((d) => d.name.toLowerCase() === file.toLowerCase())) {
+								dllFiles.push({ name: file, srcPath: path.join(extractedBinDir, file) });
+							}
+						}
+					}
+				}
+
+				// Copy DLLs to targetBinDir
+				for (const dll of dllFiles) {
+					await fs.copyFile(dll.srcPath, path.join(targetBinDir, dll.name));
+				}
+			}
+
+			// Copy binary and DLLs directly into %APPDATA%/Recordly-dev/runtime/
+			const primaryExeSrc = path.join(targetBinDir, asset.binaryName);
+			await fs.copyFile(primaryExeSrc, path.join(userDataRuntimeDir, asset.binaryName));
+			await fs.copyFile(primaryExeSrc, path.join(directRuntimeBinDir, asset.binaryName));
+
+			if (process.platform === "win32") {
+				for (const dll of dllFiles) {
+					await fs.copyFile(dll.srcPath, path.join(userDataRuntimeDir, dll.name));
+					await fs.copyFile(dll.srcPath, path.join(directRuntimeBinDir, dll.name));
+				}
+			}
+
+			// In development checkout, stage directly into electron/native/bin targets
+			const platformShort = process.platform === "win32" ? "win32" : process.platform;
+			if (!app.isPackaged) {
+				try {
+					const devArchDir = resolveUnpackedAppPath("electron", "native", "bin", archTag);
+					await fs.mkdir(devArchDir, { recursive: true });
+					await fs.cp(targetBinDir, devArchDir, { recursive: true });
+
+					const devPlatformDir = resolveUnpackedAppPath("electron", "native", "bin", platformShort);
+					await fs.mkdir(devPlatformDir, { recursive: true });
+					await fs.cp(targetBinDir, devPlatformDir, { recursive: true });
+
+					const devPlatformArchDir = resolveUnpackedAppPath(
+						"electron",
+						"native",
+						"bin",
+						`${platformShort}-${process.arch}`,
+					);
+					await fs.mkdir(devPlatformArchDir, { recursive: true });
+					await fs.cp(targetBinDir, devPlatformArchDir, { recursive: true });
+				} catch (devCopyErr) {
+					console.warn(
+						"[sherpa-onnx] Could not stage runtime to development bin directory:",
+						devCopyErr,
+					);
+				}
+			}
+
+			const finalExecutablePath = path.join(targetBinDir, asset.binaryName);
+
+			// Permissions & security hygiene for POSIX
+			if (process.platform !== "win32") {
+				const stagedPathsToChmod = [
+					finalExecutablePath,
+					path.join(userDataRuntimeDir, asset.binaryName),
+					path.join(directRuntimeBinDir, asset.binaryName),
+				];
+				for (const exePath of stagedPathsToChmod) {
+					await fs.chmod(exePath, 0o755).catch(() => {});
+				}
+
+				if (hasLib) {
+					const libEntries = await fs.readdir(targetLibDir).catch(() => [] as string[]);
+					for (const file of libEntries) {
+						await fs.chmod(path.join(targetLibDir, file), 0o755).catch(() => {});
+					}
+				}
+
+				if (process.platform === "darwin") {
+					await execFileAsync("xattr", ["-cr", SHERPA_ONNX_RUNTIME_DIR]).catch(() => {});
+					await execFileAsync("xattr", ["-cr", userDataRuntimeDir]).catch(() => {});
+				}
+			}
+
+			// Validate executable
+			const isValid = await isExecutableFile(finalExecutablePath);
+			if (!isValid) {
+				throw new Error(
+					`Downloaded sherpa-onnx binary at "${finalExecutablePath}" is not executable.`,
+				);
+			}
+
+			// Sanity check execution on Windows
+			if (process.platform === "win32") {
+				const probe = spawnSync(finalExecutablePath, ["--version"], {
+					encoding: "utf-8",
+					timeout: 5000,
+				});
+				if (probe.error) {
+					console.warn("[sherpa-onnx] Sanity check test run notice:", probe.error.message);
+				}
+			}
+
+			onProgress?.(100, "sherpa-onnx runtime installed successfully.");
+			return finalExecutablePath;
+		} finally {
+			await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+		}
+	})().finally(() => {
+		activeSherpaDownloadPromise = null;
+	});
+
+	return activeSherpaDownloadPromise;
 }
 
 /**
@@ -210,6 +552,18 @@ export async function downloadParakeetModel(webContents: Electron.WebContents): 
 			const tempFile = path.join(tempDownloadDir, fileName);
 			const finalFile = path.join(PARAKEET_MODEL_DIR, fileName);
 			await fs.rename(tempFile, finalFile);
+		}
+
+		// Ensure sherpa-onnx engine runtime binary is present
+		const runtimeStatus = await getSherpaOnnxRuntimeStatus();
+		if (!runtimeStatus.exists) {
+			sendParakeetModelDownloadProgress(webContents, {
+				status: "downloading",
+				progress: 99,
+				currentFile: "sherpa-onnx runtime engine",
+				path: null,
+			});
+			await ensureSherpaOnnxRuntimeBinary();
 		}
 
 		await fs.rm(tempDownloadDir, { recursive: true, force: true }).catch(() => undefined);

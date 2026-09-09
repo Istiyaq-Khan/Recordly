@@ -222,6 +222,13 @@ export type ParakeetModelStatus = {
 	error?: string;
 };
 
+export type ParakeetRuntimeStatus = {
+	success: boolean;
+	exists: boolean;
+	path: string | null;
+	error?: string;
+};
+
 export type ParakeetModelDownloadProgress = {
 	status: "idle" | "downloading" | "downloaded" | "error";
 	progress: number;

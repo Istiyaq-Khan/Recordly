@@ -166,6 +166,32 @@ export function useAutoCaptionController({
 		setParakeetModelPath,
 	]);
 
+	useEffect(() => {
+		if (!setParakeetExecutablePath) return;
+
+		const unsubscribe = window.electronAPI.onParakeetRuntimeDownloadProgress?.((state) => {
+			if (state.status === "downloaded" && state.path) {
+				setParakeetExecutablePath(state.path);
+			}
+		});
+
+		void window.electronAPI.getParakeetRuntimeStatus?.(parakeetExecutablePath).then((result) => {
+			if (result?.exists && result.path) {
+				if (!parakeetExecutablePath) {
+					setParakeetExecutablePath(result.path);
+				}
+			} else if (!parakeetExecutablePath && captionEngine === "parakeet") {
+				void window.electronAPI.downloadSherpaOnnxRuntime?.().then((downloadRes) => {
+					if (downloadRes?.success && downloadRes.path) {
+						setParakeetExecutablePath(downloadRes.path);
+					}
+				});
+			}
+		});
+
+		return () => unsubscribe?.();
+	}, [captionEngine, parakeetExecutablePath, setParakeetExecutablePath]);
+
 	const handlePickWhisperExecutable = useCallback(async () => {
 		const result = await window.electronAPI.openWhisperExecutablePicker();
 		if (!result.success || !result.path) return;
@@ -241,10 +267,16 @@ export function useAutoCaptionController({
 		if (result.path) {
 			setDownloadedParakeetModelPath?.(result.path);
 			setParakeetModelPath?.(result.path);
+			void window.electronAPI.getParakeetRuntimeStatus?.().then((runtime) => {
+				if (runtime?.exists && runtime.path) {
+					setParakeetExecutablePath?.(runtime.path);
+				}
+			});
 		}
 	}, [
 		parakeetModelDownloadStatus,
 		setDownloadedParakeetModelPath,
+		setParakeetExecutablePath,
 		setParakeetModelDownloadProgress,
 		setParakeetModelDownloadStatus,
 		setParakeetModelPath,
@@ -255,7 +287,18 @@ export function useAutoCaptionController({
 		if (!result?.success || !result.path) return;
 		setParakeetModelPath?.(result.path);
 		toast.success("Parakeet model selected");
-	}, [setParakeetModelPath]);
+		void window.electronAPI.getParakeetRuntimeStatus?.(parakeetExecutablePath).then((runtime) => {
+			if (runtime?.exists && runtime.path) {
+				setParakeetExecutablePath?.(runtime.path);
+			} else if (!parakeetExecutablePath) {
+				void window.electronAPI.downloadSherpaOnnxRuntime?.().then((downloadRes) => {
+					if (downloadRes?.success && downloadRes.path) {
+						setParakeetExecutablePath?.(downloadRes.path);
+					}
+				});
+			}
+		});
+	}, [parakeetExecutablePath, setParakeetExecutablePath, setParakeetModelPath]);
 
 	const handleDeleteParakeetModel = useCallback(async () => {
 		const result = await window.electronAPI.deleteParakeetModel?.();

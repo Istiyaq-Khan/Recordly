@@ -29,6 +29,57 @@ export const PARAKEET_MODEL_FILES = [
 	"joiner.int8.onnx",
 	"tokens.txt",
 ] as const;
+
+export const SHERPA_ONNX_RELEASE_VERSION = "v1.13.7";
+export const SHERPA_ONNX_RELEASE_BASE_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_ONNX_RELEASE_VERSION}`;
+
+export interface SherpaOnnxBinaryAsset {
+	archiveName: string;
+	url: string;
+	binaryName: string;
+	extractedSubdir: string;
+}
+
+export const SHERPA_ONNX_RUNTIME_ASSETS: Record<string, SherpaOnnxBinaryAsset> = {
+	"win32-x64": {
+		archiveName: "sherpa-onnx-v1.13.7-win-x64-shared-MT-Release.tar.bz2",
+		url: `${SHERPA_ONNX_RELEASE_BASE_URL}/sherpa-onnx-v1.13.7-win-x64-shared-MT-Release.tar.bz2`,
+		binaryName: "sherpa-onnx-offline.exe",
+		extractedSubdir: "sherpa-onnx-v1.13.7-win-x64-shared-MT-Release",
+	},
+	"win32-arm64": {
+		archiveName: "sherpa-onnx-v1.13.7-win-arm64-shared-MT-Release.tar.bz2",
+		url: `${SHERPA_ONNX_RELEASE_BASE_URL}/sherpa-onnx-v1.13.7-win-arm64-shared-MT-Release.tar.bz2`,
+		binaryName: "sherpa-onnx-offline.exe",
+		extractedSubdir: "sherpa-onnx-v1.13.7-win-arm64-shared-MT-Release",
+	},
+	"darwin-x64": {
+		archiveName: "sherpa-onnx-v1.13.7-osx-universal2-shared.tar.bz2",
+		url: `${SHERPA_ONNX_RELEASE_BASE_URL}/sherpa-onnx-v1.13.7-osx-universal2-shared.tar.bz2`,
+		binaryName: "sherpa-onnx-offline",
+		extractedSubdir: "sherpa-onnx-v1.13.7-osx-universal2-shared",
+	},
+	"darwin-arm64": {
+		archiveName: "sherpa-onnx-v1.13.7-osx-universal2-shared.tar.bz2",
+		url: `${SHERPA_ONNX_RELEASE_BASE_URL}/sherpa-onnx-v1.13.7-osx-universal2-shared.tar.bz2`,
+		binaryName: "sherpa-onnx-offline",
+		extractedSubdir: "sherpa-onnx-v1.13.7-osx-universal2-shared",
+	},
+	"linux-x64": {
+		archiveName: "sherpa-onnx-v1.13.7-linux-x64-shared.tar.bz2",
+		url: `${SHERPA_ONNX_RELEASE_BASE_URL}/sherpa-onnx-v1.13.7-linux-x64-shared.tar.bz2`,
+		binaryName: "sherpa-onnx-offline",
+		extractedSubdir: "sherpa-onnx-v1.13.7-linux-x64-shared",
+	},
+	"linux-arm64": {
+		archiveName: "sherpa-onnx-v1.13.7-linux-aarch64-shared-cpu.tar.bz2",
+		url: `${SHERPA_ONNX_RELEASE_BASE_URL}/sherpa-onnx-v1.13.7-linux-aarch64-shared-cpu.tar.bz2`,
+		binaryName: "sherpa-onnx-offline",
+		extractedSubdir: "sherpa-onnx-v1.13.7-linux-aarch64-shared-cpu",
+	},
+};
+
+export const SHERPA_ONNX_RUNTIME_DIR = path.join(USER_DATA_PATH, "runtime", "sherpa-onnx");
 export const COMPANION_AUDIO_LAYOUTS = [
 	{ platform: "mac" as const, systemSuffix: ".system.m4a", micSuffix: ".mic.m4a" },
 	{ platform: "win" as const, systemSuffix: ".system.wav", micSuffix: ".mic.wav" },

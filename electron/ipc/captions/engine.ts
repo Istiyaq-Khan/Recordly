@@ -4,12 +4,15 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { app } from "electron";
 import {
-	getBundledSherpaOnnxExecutableCandidates,
 	getBundledWhisperExecutableCandidates,
 } from "../paths/binaries";
 import type { CaptionCuePayload, CaptionEngineType } from "../types";
 import { ensureReadableFile, isExecutableFile } from "./generateUtils";
-import { resolveParakeetModelFiles } from "./parakeet";
+import {
+	ensureSherpaOnnxRuntimeBinary,
+	findExistingSherpaOnnxExecutable,
+	resolveParakeetModelFiles,
+} from "./parakeet";
 import {
 	parseParakeetJsonOutput,
 	parseSrtCues,
@@ -88,38 +91,18 @@ export async function resolveWhisperExecutablePath(preferredPath?: string | null
 export async function resolveSherpaOnnxExecutablePath(
 	preferredPath?: string | null,
 ): Promise<string> {
-	const candidatePaths = [
-		preferredPath?.trim() || null,
-		...getBundledSherpaOnnxExecutableCandidates(),
-		process.env["SHERPA_ONNX_PATH"]?.trim() || null,
-		process.platform === "darwin" ? "/opt/homebrew/bin/sherpa-onnx-offline" : null,
-		process.platform === "darwin" ? "/usr/local/bin/sherpa-onnx-offline" : null,
-	].filter((value): value is string => Boolean(value));
-
-	for (const candidate of candidatePaths) {
-		const normalized = path.resolve(candidate);
-		if (await isExecutableFile(normalized)) {
-			return normalized;
-		}
+	const existing = await findExistingSherpaOnnxExecutable(preferredPath);
+	if (existing) {
+		return existing;
 	}
 
-	const pathCommand = process.platform === "win32" ? "where" : "which";
-	const binaryNames =
-		process.platform === "win32"
-			? ["sherpa-onnx-offline.exe", "sherpa-onnx.exe"]
-			: ["sherpa-onnx-offline", "sherpa-onnx"];
-
-	for (const binaryName of binaryNames) {
-		const result = spawnSync(pathCommand, [binaryName], { encoding: "utf-8" });
-		if (result.status === 0) {
-			const resolvedPath = result.stdout
-				.split(/\r?\n/)
-				.map((line) => line.trim())
-				.find(Boolean);
-
-			if (resolvedPath && (await isExecutableFile(resolvedPath))) {
-				return resolvedPath;
-			}
+	if (!preferredPath?.trim()) {
+		console.log(
+			"[auto-captions] sherpa-onnx runtime missing, automatically provisioning precompiled binary...",
+		);
+		const downloaded = await ensureSherpaOnnxRuntimeBinary();
+		if (downloaded) {
+			return downloaded;
 		}
 	}
 
@@ -232,7 +215,16 @@ export class ParakeetEngineAdapter implements ITranscriptionEngine {
 	readonly name = "NVIDIA Parakeet-TDT (sherpa-onnx)";
 
 	async resolveExecutable(preferredPath?: string | null): Promise<string> {
-		const exePath = await resolveSherpaOnnxExecutablePath(preferredPath);
+		let exePath: string | null = null;
+		try {
+			exePath = await resolveSherpaOnnxExecutablePath(preferredPath);
+		} catch {
+			console.log(
+				"[auto-captions] sherpa-onnx runtime missing or preferred path invalid, automatically provisioning precompiled binary...",
+			);
+			exePath = await ensureSherpaOnnxRuntimeBinary();
+		}
+
 		await ensureReadableFile(exePath, { executable: true });
 		return exePath;
 	}
@@ -245,6 +237,30 @@ export class ParakeetEngineAdapter implements ITranscriptionEngine {
 	async transcribe(request: TranscriptionRequest): Promise<TranscriptionResult> {
 		const sherpaExecutablePath = await this.resolveExecutable(request.executablePath);
 		const modelFiles = await resolveParakeetModelFiles(request.modelPath);
+
+		const exeDir = path.dirname(sherpaExecutablePath);
+		const parentDir = path.dirname(exeDir);
+		const libDir = path.join(parentDir, "lib");
+		const sep = path.delimiter;
+		const extraPath =
+			process.platform === "win32"
+				? `${exeDir}${sep}${libDir}${sep}${process.env["PATH"] || ""}`
+				: `${exeDir}${sep}${process.env["PATH"] || ""}`;
+
+		const env: NodeJS.ProcessEnv = {
+			...process.env,
+			PATH: extraPath,
+			...(process.platform === "linux"
+				? {
+						LD_LIBRARY_PATH: `${libDir}:${exeDir}:${process.env["LD_LIBRARY_PATH"] || ""}`,
+					}
+				: {}),
+			...(process.platform === "darwin"
+				? {
+						DYLD_LIBRARY_PATH: `${libDir}:${exeDir}:${process.env["DYLD_LIBRARY_PATH"] || ""}`,
+					}
+				: {}),
+		};
 
 		const args = [
 			`--encoder=${modelFiles.encoderPath}`,
@@ -259,6 +275,7 @@ export class ParakeetEngineAdapter implements ITranscriptionEngine {
 		let stdout = "";
 		try {
 			const result = await execFileAsync(sherpaExecutablePath, args, {
+				env,
 				timeout: 30 * 60 * 1000,
 				maxBuffer: 30 * 1024 * 1024,
 			});
