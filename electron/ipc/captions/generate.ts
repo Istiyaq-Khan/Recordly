@@ -7,7 +7,10 @@ import { app } from "electron";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
 import { getBundledWhisperExecutableCandidates } from "../paths/binaries";
 import { resolveRecordingSession } from "../project/session";
-import { getUsableCompanionAudioCandidates } from "../recording/diagnostics";
+import {
+	getCompanionAudioStartDelayMs,
+	getUsableCompanionAudioCandidates,
+} from "../recording/diagnostics";
 import { normalizeVideoSourcePath } from "../utils";
 import { getCaptionCompanionAudioCandidates } from "./audioCandidates";
 import { segmentCuesIntoPhrases } from "./segment";
@@ -106,13 +109,23 @@ export async function resolveCaptionAudioCandidates(videoPath: string) {
 	return candidates;
 }
 
+export interface ExtractedCaptionAudioResult {
+	path: string;
+	label: string;
+	startDelayMs: number;
+	audioStartMs: number;
+	effectiveTimelineOffsetMs: number;
+}
+
 export async function extractCaptionAudioSource(options: {
 	videoPath: string;
 	ffmpegPath: string;
 	wavPath: string;
 	startSec?: number;
 	durationSec?: number;
-}) {
+	clipStartMs?: number;
+	clipEndMs?: number;
+}): Promise<ExtractedCaptionAudioResult> {
 	const candidates = await resolveCaptionAudioCandidates(options.videoPath);
 	const attemptedCandidates: Array<{
 		path: string;
@@ -122,24 +135,51 @@ export async function extractCaptionAudioSource(options: {
 		error?: string;
 	}> = [];
 
-	const hasStart =
-		typeof options.startSec === "number" &&
-		Number.isFinite(options.startSec) &&
-		options.startSec > 0;
-	const hasDuration =
-		typeof options.durationSec === "number" &&
-		Number.isFinite(options.durationSec) &&
-		options.durationSec > 0;
+	const requestedClipStartMs =
+		typeof options.clipStartMs === "number" &&
+		Number.isFinite(options.clipStartMs) &&
+		options.clipStartMs > 0
+			? Math.round(options.clipStartMs)
+			: typeof options.startSec === "number" &&
+					Number.isFinite(options.startSec) &&
+					options.startSec > 0
+				? Math.round(options.startSec * 1000)
+				: 0;
+
+	const requestedClipEndMs =
+		typeof options.clipEndMs === "number" &&
+		Number.isFinite(options.clipEndMs) &&
+		options.clipEndMs > requestedClipStartMs
+			? Math.round(options.clipEndMs)
+			: typeof options.durationSec === "number" &&
+					Number.isFinite(options.durationSec) &&
+					options.durationSec > 0
+				? requestedClipStartMs + Math.round(options.durationSec * 1000)
+				: undefined;
 
 	for (const candidate of candidates) {
 		try {
 			await ensureReadableFile(candidate.path);
+			const startDelayMs = (await getCompanionAudioStartDelayMs(candidate.path)) ?? 0;
+			const audioStartMs = Math.max(0, requestedClipStartMs - startDelayMs);
+			const audioStartSec = audioStartMs > 0 ? audioStartMs / 1000 : undefined;
+
+			let audioDurationSec: number | undefined;
+			if (typeof requestedClipEndMs === "number") {
+				const audioEndMs = Math.max(0, requestedClipEndMs - startDelayMs);
+				if (audioEndMs > audioStartMs) {
+					audioDurationSec = (audioEndMs - audioStartMs) / 1000;
+				}
+			}
+
 			const ffmpegArgs = [
 				"-y",
-				...(hasStart ? ["-ss", options.startSec!.toFixed(3)] : []),
+				...(typeof audioStartSec === "number" ? ["-ss", audioStartSec.toFixed(3)] : []),
 				"-i",
 				candidate.path,
-				...(hasDuration ? ["-t", options.durationSec!.toFixed(3)] : []),
+				...(typeof audioDurationSec === "number"
+					? ["-t", audioDurationSec.toFixed(3)]
+					: []),
 				"-map",
 				"0:a:0",
 				"-vn",
@@ -158,7 +198,12 @@ export async function extractCaptionAudioSource(options: {
 				maxBuffer: 20 * 1024 * 1024,
 			});
 			attemptedCandidates.push({ ...candidate, readable: true, extractedAudio: true });
-			return candidate;
+			return {
+				...candidate,
+				startDelayMs,
+				audioStartMs,
+				effectiveTimelineOffsetMs: startDelayMs + audioStartMs,
+			};
 		} catch (error) {
 			attemptedCandidates.push({
 				...candidate,
@@ -239,6 +284,8 @@ export async function generateAutoCaptionsFromVideo(options: {
 			wavPath,
 			startSec,
 			durationSec,
+			clipStartMs,
+			clipEndMs: options.clipEndMs,
 		});
 
 		const transcriptionResult = await transcriptionEngine.transcribe({
@@ -272,18 +319,20 @@ export async function generateAutoCaptionsFromVideo(options: {
 			);
 		}
 
-		// If the audio was extracted starting from a clip offset, shift cue timestamps to match the timeline clip
-		if (clipStartMs > 0) {
+		// Shift cue timestamps to match timeline coordinate space
+		// (accounting for clip start and companion audio start delay)
+		if (audioSource.effectiveTimelineOffsetMs > 0) {
+			const offsetMs = audioSource.effectiveTimelineOffsetMs;
 			cuesToReturn = cuesToReturn.map((cue) => {
 				const words = cue.words?.map((word) => ({
 					...word,
-					startMs: word.startMs + clipStartMs,
-					endMs: word.endMs + clipStartMs,
+					startMs: word.startMs + offsetMs,
+					endMs: word.endMs + offsetMs,
 				}));
 				return {
 					...cue,
-					startMs: cue.startMs + clipStartMs,
-					endMs: cue.endMs + clipStartMs,
+					startMs: cue.startMs + offsetMs,
+					endMs: cue.endMs + offsetMs,
 					...(words ? { words } : {}),
 				};
 			});
