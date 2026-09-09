@@ -519,17 +519,18 @@ function downloadSingleFile(
 						Number.isFinite(contentLength) &&
 						contentLength !== verification.expectedSize
 					) {
-						response.destroy(
-							new Error(
-								`Content length header mismatch for ${path.basename(destinationPath)}: expected ${verification.expectedSize} bytes, got ${contentLength} bytes`,
-							),
+						const mismatchError = new Error(
+							`Content length header mismatch for ${path.basename(destinationPath)}: expected ${verification.expectedSize} bytes, got ${contentLength} bytes`,
 						);
+						response.destroy(mismatchError);
+						void fs.rm(destinationPath, { force: true }).catch(() => undefined);
+						reject(mismatchError);
 						return;
 					}
 				}
 
 				const hash = createHash("sha256");
-				let bytesReceived = 0;
+				let downloadedBytes = 0;
 				const fileStream = createWriteStream(destinationPath);
 
 				const cleanupAndReject = async (err: Error) => {
@@ -540,9 +541,9 @@ function downloadSingleFile(
 				};
 
 				response.on("data", (chunk: Buffer) => {
-					bytesReceived += chunk.length;
+					downloadedBytes += chunk.length;
 					hash.update(chunk);
-					onByteChunk(chunk.length);
+					onByteChunk(downloadedBytes);
 				});
 
 				response.on("error", (error) => {
@@ -556,11 +557,11 @@ function downloadSingleFile(
 				fileStream.on("finish", () => {
 					if (
 						verification?.expectedSize !== undefined &&
-						bytesReceived !== verification.expectedSize
+						downloadedBytes !== verification.expectedSize
 					) {
 						void cleanupAndReject(
 							new Error(
-								`Downloaded size mismatch for ${path.basename(destinationPath)}: expected ${verification.expectedSize} bytes, received ${bytesReceived} bytes`,
+								`Downloaded size mismatch for ${path.basename(destinationPath)}: expected ${verification.expectedSize} bytes, received ${downloadedBytes} bytes`,
 							),
 						);
 						return;
@@ -623,6 +624,8 @@ export async function downloadParakeetModel(webContents: Electron.WebContents): 
 			const fileUrl = `${PARAKEET_MODEL_DOWNLOAD_BASE_URL}/${fileName}`;
 			const destPath = path.join(tempDownloadDir, fileName);
 			const metadata = PARAKEET_MODEL_FILE_METADATA[fileName];
+			const baseBytes = totalBytesDownloaded;
+			let currentFileBytes = 0;
 
 			sendParakeetModelDownloadProgress(webContents, {
 				status: "downloading",
@@ -637,11 +640,12 @@ export async function downloadParakeetModel(webContents: Electron.WebContents): 
 			await downloadSingleFile(
 				fileUrl,
 				destPath,
-				(bytesChunk) => {
-					totalBytesDownloaded += bytesChunk;
+				(fileBytesDownloaded) => {
+					currentFileBytes = fileBytesDownloaded;
+					const currentTotal = baseBytes + fileBytesDownloaded;
 					const percent = Math.min(
 						99,
-						Math.round((totalBytesDownloaded / ESTIMATED_TOTAL_BYTES) * 100),
+						Math.round((currentTotal / ESTIMATED_TOTAL_BYTES) * 100),
 					);
 					sendParakeetModelDownloadProgress(webContents, {
 						status: "downloading",
@@ -652,6 +656,7 @@ export async function downloadParakeetModel(webContents: Electron.WebContents): 
 				},
 				metadata,
 			);
+			totalBytesDownloaded = baseBytes + currentFileBytes;
 		}
 
 		// Move downloaded files to final directory

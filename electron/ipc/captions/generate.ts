@@ -110,6 +110,8 @@ export async function extractCaptionAudioSource(options: {
 	videoPath: string;
 	ffmpegPath: string;
 	wavPath: string;
+	startSec?: number;
+	durationSec?: number;
 }) {
 	const candidates = await resolveCaptionAudioCandidates(options.videoPath);
 	const attemptedCandidates: Array<{
@@ -120,28 +122,41 @@ export async function extractCaptionAudioSource(options: {
 		error?: string;
 	}> = [];
 
+	const hasStart =
+		typeof options.startSec === "number" &&
+		Number.isFinite(options.startSec) &&
+		options.startSec > 0;
+	const hasDuration =
+		typeof options.durationSec === "number" &&
+		Number.isFinite(options.durationSec) &&
+		options.durationSec > 0;
+
 	for (const candidate of candidates) {
 		try {
 			await ensureReadableFile(candidate.path);
-			await execFileAsync(
-				options.ffmpegPath,
-				[
-					"-y",
-					"-i",
-					candidate.path,
-					"-map",
-					"0:a:0",
-					"-vn",
-					"-ac",
-					"1",
-					"-ar",
-					"16000",
-					"-c:a",
-					"pcm_s16le",
-					options.wavPath,
-				],
-				{ timeout: 5 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 },
-			);
+			const ffmpegArgs = [
+				"-y",
+				...(hasStart ? ["-ss", options.startSec!.toFixed(3)] : []),
+				"-i",
+				candidate.path,
+				...(hasDuration ? ["-t", options.durationSec!.toFixed(3)] : []),
+				"-map",
+				"0:a:0",
+				"-vn",
+				"-ac",
+				"1",
+				"-ar",
+				"16000",
+				"-af",
+				"aresample=16000:async=1:first_pts=0,asetpts=PTS-STARTPTS",
+				"-c:a",
+				"pcm_s16le",
+				options.wavPath,
+			];
+			await execFileAsync(options.ffmpegPath, ffmpegArgs, {
+				timeout: 5 * 60 * 1000,
+				maxBuffer: 20 * 1024 * 1024,
+			});
 			attemptedCandidates.push({ ...candidate, readable: true, extractedAudio: true });
 			return candidate;
 		} catch (error) {
@@ -174,12 +189,39 @@ export async function generateAutoCaptionsFromVideo(options: {
 	parakeetExecutablePath?: string;
 	parakeetModelPath?: string;
 	language?: string;
+	startSec?: number;
+	durationSec?: number;
+	clipStartMs?: number;
+	clipEndMs?: number;
 }) {
 	const ffmpegPath = getFfmpegBinaryPath();
 	const normalizedVideoPath = normalizeVideoSourcePath(options.videoPath);
 	if (!normalizedVideoPath) {
 		throw new Error("Missing source video path.");
 	}
+
+	const clipStartMs =
+		typeof options.clipStartMs === "number" &&
+		Number.isFinite(options.clipStartMs) &&
+		options.clipStartMs > 0
+			? Math.round(options.clipStartMs)
+			: typeof options.startSec === "number" &&
+					Number.isFinite(options.startSec) &&
+					options.startSec > 0
+				? Math.round(options.startSec * 1000)
+				: 0;
+
+	const startSec = clipStartMs > 0 ? clipStartMs / 1000 : undefined;
+	const durationSec =
+		typeof options.clipEndMs === "number" &&
+		Number.isFinite(options.clipEndMs) &&
+		options.clipEndMs > clipStartMs
+			? (options.clipEndMs - clipStartMs) / 1000
+			: typeof options.durationSec === "number" &&
+					Number.isFinite(options.durationSec) &&
+					options.durationSec > 0
+				? options.durationSec
+				: undefined;
 
 	const engineType = options.engine ?? "whisper";
 	const transcriptionEngine = getTranscriptionEngine(engineType);
@@ -195,6 +237,8 @@ export async function generateAutoCaptionsFromVideo(options: {
 			videoPath: normalizedVideoPath,
 			ffmpegPath,
 			wavPath,
+			startSec,
+			durationSec,
 		});
 
 		const transcriptionResult = await transcriptionEngine.transcribe({
@@ -226,6 +270,23 @@ export async function generateAutoCaptionsFromVideo(options: {
 				"[auto-captions] Silence-aware re-segmentation failed, using raw cues:",
 				error,
 			);
+		}
+
+		// If the audio was extracted starting from a clip offset, shift cue timestamps to match the timeline clip
+		if (clipStartMs > 0) {
+			cuesToReturn = cuesToReturn.map((cue) => {
+				const words = cue.words?.map((word) => ({
+					...word,
+					startMs: word.startMs + clipStartMs,
+					endMs: word.endMs + clipStartMs,
+				}));
+				return {
+					...cue,
+					startMs: cue.startMs + clipStartMs,
+					endMs: cue.endMs + clipStartMs,
+					...(words ? { words } : {}),
+				};
+			});
 		}
 
 		return {

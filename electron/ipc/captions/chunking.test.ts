@@ -360,7 +360,11 @@ Input #0, wav, from 'sample.wav':
 			expect(allTexts).toContain("unsegmented");
 			expect(allTexts).toContain("phrase");
 			expect(allTexts).toContain("here");
-			expect(mergedCues[0].text).toContain("unsegmented phrase here");
+			// Specifically verify that a space exists between 'world' and 'unsegmented'
+			expect(mergedCues[0].text).toBe("hello world unsegmented phrase here");
+			expect(mergedCues[0].words?.find((w) => w.text === "unsegmented")?.leadingSpace).toBe(
+				true,
+			);
 		});
 	});
 });

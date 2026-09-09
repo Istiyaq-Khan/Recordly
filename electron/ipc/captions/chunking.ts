@@ -264,6 +264,8 @@ export async function sliceAudioChunk(options: {
 			"1",
 			"-ar",
 			"16000",
+			"-af",
+			"aresample=16000:async=1:first_pts=0,asetpts=PTS-STARTPTS",
 			"-c:a",
 			"pcm_s16le",
 			options.outputWavPath,
@@ -455,7 +457,7 @@ export function mergeAndDeduplicateChunkCues(
 								text: token,
 								startMs: wStart,
 								endMs: Math.max(wStart + 50, wEnd),
-								leadingSpace: idx > 0,
+								leadingSpace: true,
 							});
 						});
 					}
