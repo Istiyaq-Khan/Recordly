@@ -718,8 +718,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	openParakeetExecutablePicker: () => {
 		return ipcRenderer.invoke("open-parakeet-executable-picker");
 	},
-	openParakeetModelPicker: () => {
-		return ipcRenderer.invoke("open-parakeet-model-picker");
+	openParakeetModelPicker: (options?: { mode?: "directory" | "file" }) => {
+		return ipcRenderer.invoke("open-parakeet-model-picker", options);
+	},
+	openParakeetModelFilePicker: () => {
+		return ipcRenderer.invoke("open-parakeet-model-file-picker");
+	},
+	openParakeetModelDirectoryPicker: () => {
+		return ipcRenderer.invoke("open-parakeet-model-directory-picker");
 	},
 	getParakeetModelStatus: () => {
 		return ipcRenderer.invoke("get-parakeet-model-status");

@@ -6,25 +6,20 @@ import { describe, expect, it, vi } from "vitest";
 import { ParakeetEngineAdapter } from "./engine";
 import { segmentCuesIntoPhrases } from "./segment";
 import { detectSilenceIntervals } from "./silence";
-import {
-	findExistingSherpaOnnxExecutable,
-	resolveParakeetModelFiles,
-} from "./parakeet";
+import { findExistingSherpaOnnxExecutable, resolveParakeetModelFiles } from "./parakeet";
 import { PARAKEET_MODEL_DIR } from "../constants";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
 import { probeAudioDuration } from "./chunking";
 
 // Vitest hoisted mock setup so electron paths are dynamically resolved per platform
-const { mockTempDir, mockUserDataDir } = vi.hoisted(() => {
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
-	const nodeOs = require("node:os");
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
-	const nodePath = require("node:path");
+const { mockTempDir, mockUserDataDir } = await vi.hoisted(async () => {
+	const nodeOs = await import("node:os");
+	const nodePath = await import("node:path");
 	const temp = nodeOs.tmpdir();
 	const userData =
 		process.platform === "win32"
 			? nodePath.join(
-					process.env.APPDATA || nodePath.join(nodeOs.homedir(), "AppData", "Roaming"),
+					process.env["APPDATA"] || nodePath.join(nodeOs.homedir(), "AppData", "Roaming"),
 					"Recordly-dev",
 				)
 			: nodePath.join(nodeOs.homedir(), ".config", "Recordly-dev");

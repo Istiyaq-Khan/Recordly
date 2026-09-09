@@ -111,18 +111,34 @@ export function getBundledSherpaOnnxExecutableCandidates(): string[] {
 
 		// Prebundled native helper paths within app bundle / dev checkout
 		candidates.add(getPrebundledNativeHelperPath(binaryName, archTag));
-		candidates.add(resolveUnpackedAppPath("electron", "native", "bin", platformShort, binaryName));
 		candidates.add(
-			resolveUnpackedAppPath("electron", "native", "bin", `${platformShort}-${process.arch}`, binaryName),
+			resolveUnpackedAppPath("electron", "native", "bin", platformShort, binaryName),
+		);
+		candidates.add(
+			resolveUnpackedAppPath(
+				"electron",
+				"native",
+				"bin",
+				`${platformShort}-${process.arch}`,
+				binaryName,
+			),
 		);
 		candidates.add(
 			resolveUnpackedAppPath("electron", "native", "bin", `${platformShort}-x64`, binaryName),
 		);
 		candidates.add(
-			resolveUnpackedAppPath("electron", "native", "bin", `${platformShort}-arm64`, binaryName),
+			resolveUnpackedAppPath(
+				"electron",
+				"native",
+				"bin",
+				`${platformShort}-arm64`,
+				binaryName,
+			),
 		);
 		if (process.platform === "win32") {
-			candidates.add(resolveUnpackedAppPath("electron", "native", "bin", "win32", binaryName));
+			candidates.add(
+				resolveUnpackedAppPath("electron", "native", "bin", "win32", binaryName),
+			);
 		}
 	}
 

@@ -32,8 +32,14 @@ describe("Sherpa-ONNX Runtime Configuration & Resolution", () => {
 		for (const tag of requiredPlatforms) {
 			const asset = SHERPA_ONNX_RUNTIME_ASSETS[tag];
 			expect(asset, `Asset for ${tag} should be defined`).toBeDefined();
-			expect(asset.url).toMatch(/^https:\/\/github\.com\/k2-fsa\/sherpa-onnx\/releases\/download\//);
-			const platformSlug = tag.startsWith("win32") ? "win" : tag.startsWith("darwin") ? "osx" : "linux";
+			expect(asset.url).toMatch(
+				/^https:\/\/github\.com\/k2-fsa\/sherpa-onnx\/releases\/download\//,
+			);
+			const platformSlug = tag.startsWith("win32")
+				? "win"
+				: tag.startsWith("darwin")
+					? "osx"
+					: "linux";
 			expect(asset.archiveName).toContain(platformSlug);
 			if (tag.startsWith("win32")) {
 				expect(asset.binaryName).toBe("sherpa-onnx-offline.exe");
@@ -48,8 +54,9 @@ describe("Sherpa-ONNX Runtime Configuration & Resolution", () => {
 		expect(candidates.length).toBeGreaterThan(0);
 
 		// Should include UserData runtime paths
-		const hasUserDataRuntime = candidates.some((c) =>
-			c.includes("MockUserData") && (c.includes("runtime") || c.includes("sherpa-onnx")),
+		const hasUserDataRuntime = candidates.some(
+			(c) =>
+				c.includes("MockUserData") && (c.includes("runtime") || c.includes("sherpa-onnx")),
 		);
 		expect(hasUserDataRuntime).toBe(true);
 

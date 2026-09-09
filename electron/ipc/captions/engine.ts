@@ -3,9 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { app } from "electron";
-import {
-	getBundledWhisperExecutableCandidates,
-} from "../paths/binaries";
+import { getBundledWhisperExecutableCandidates } from "../paths/binaries";
 import type { CaptionCuePayload, CaptionEngineType } from "../types";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
 import { ensureReadableFile, isExecutableFile } from "./generateUtils";

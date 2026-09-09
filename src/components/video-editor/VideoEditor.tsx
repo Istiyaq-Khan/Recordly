@@ -152,10 +152,16 @@ export default function VideoEditor() {
 		exportSettings,
 		aspectRatio,
 		setAspectRatio,
+		captionEngine,
+		setCaptionEngine,
 		whisperExecutablePath,
 		setWhisperExecutablePath,
 		whisperModelPath,
 		setWhisperModelPath,
+		parakeetExecutablePath,
+		setParakeetExecutablePath,
+		parakeetModelPath,
+		setParakeetModelPath,
 	});
 	const { refreshProjectLibrary, captureProjectThumbnail } = useProjectLibraryController({
 		project,

@@ -2440,7 +2440,7 @@ export function SettingsPanel({
 								{tSettings("captions.modelInfo", "Model")}
 							</div>
 							<div className="text-xs text-muted-foreground font-mono">
-								Parakeet-TDT 0.6B (EN)
+								{tSettings("captions.parakeetModelName", "Parakeet-TDT 0.6B v3")}
 							</div>
 						</div>
 						<div className="flex flex-wrap items-center gap-2">

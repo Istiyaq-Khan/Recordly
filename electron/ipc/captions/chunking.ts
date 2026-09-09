@@ -103,7 +103,10 @@ export async function probeAudioDuration(audioPath: string): Promise<number> {
 		try {
 			const header = Buffer.alloc(44);
 			await fd.read(header, 0, 44, 0);
-			if (header.toString("ascii", 0, 4) === "RIFF" && header.toString("ascii", 8, 12) === "WAVE") {
+			if (
+				header.toString("ascii", 0, 4) === "RIFF" &&
+				header.toString("ascii", 8, 12) === "WAVE"
+			) {
 				const byteRate = header.readUInt32LE(28);
 				const stat = await fd.stat();
 				if (byteRate > 0 && stat.size > 44) {
@@ -186,7 +189,8 @@ export function planAudioChunks(
 			let bestSilence = candidateSilences[0];
 			let minDiff = Number.POSITIVE_INFINITY;
 			for (const s of candidateSilences) {
-				const midMs = (Math.max(s.startMs, windowMinMs) + Math.min(s.endMs, windowMaxMs)) / 2;
+				const midMs =
+					(Math.max(s.startMs, windowMinMs) + Math.min(s.endMs, windowMaxMs)) / 2;
 				const diff = Math.abs(midMs - targetSplitMs);
 				if (diff < minDiff) {
 					minDiff = diff;
@@ -271,10 +275,7 @@ export async function sliceAudioChunk(options: {
 /**
  * Adds an offset in milliseconds to cue and word timestamps.
  */
-export function adjustCueOffsets(
-	cues: CaptionCuePayload[],
-	offsetMs: number,
-): CaptionCuePayload[] {
+export function adjustCueOffsets(cues: CaptionCuePayload[], offsetMs: number): CaptionCuePayload[] {
 	if (offsetMs === 0) return cues;
 	return cues.map((cue) => {
 		const adjustedWords = cue.words?.map((word) => ({
@@ -303,7 +304,8 @@ function wordsMatch(w1: CaptionWordPayload, w2: CaptionWordPayload): boolean {
 	const t1 = normalizeWord(w1.text);
 	const t2 = normalizeWord(w2.text);
 	if (!t1 || !t2) return false;
-	const isSubword = t1 === t2 || t1.startsWith(t2) || t2.startsWith(t1);
+	const minLen = Math.min(t1.length, t2.length);
+	const isSubword = t1 === t2 || (minLen >= 3 && (t1.startsWith(t2) || t2.startsWith(t1)));
 	const timeOverlap = Math.max(w1.startMs, w2.startMs) < Math.min(w1.endMs, w2.endMs) + 150;
 	const startDiff = Math.abs(w1.startMs - w2.startMs);
 	return isSubword && (timeOverlap || startDiff <= 400);
@@ -331,8 +333,9 @@ export function mergeAndDeduplicateWords(
 
 		const prevChunk = chunks[i - 1];
 		const currChunk = chunks[i];
-		const hasAudioOverlap =
-			prevChunk && currChunk && currChunk.startMs < prevChunk.endMs && !currChunk.isSilenceBoundary;
+		const hasAudioOverlap = Boolean(
+			prevChunk && currChunk && currChunk.startMs < prevChunk.endMs,
+		);
 
 		if (!hasAudioOverlap) {
 			merged.push(...currentWords);
@@ -372,7 +375,8 @@ export function mergeAndDeduplicateWords(
 			const wordCenter = (currWord.startMs + currWord.endMs) / 2;
 			if (wordCenter < overlapMidpointMs) {
 				const timeCoveredInMerged = merged.some(
-					(mw) => Math.max(mw.startMs, currWord.startMs) < Math.min(mw.endMs, currWord.endMs),
+					(mw) =>
+						Math.max(mw.startMs, currWord.startMs) < Math.min(mw.endMs, currWord.endMs),
 				);
 				if (!timeCoveredInMerged) {
 					filteredCurrentWords.push(currWord);
@@ -427,11 +431,34 @@ export function mergeAndDeduplicateChunkCues(
 
 	const hasWords = allCues.some((c) => Array.isArray(c.words) && c.words.length > 0);
 	if (hasWords) {
-		const wordRuns: CaptionWordPayload[][] = chunkCuesList.map((chunkCues) => {
+		const wordRuns: CaptionWordPayload[][] = chunkCuesList.map((chunkCues, chunkIndex) => {
 			const words: CaptionWordPayload[] = [];
+			const chunk = chunks[chunkIndex];
 			for (const cue of chunkCues) {
 				if (cue.words && cue.words.length > 0) {
 					words.push(...cue.words);
+				} else if (cue.text?.trim()) {
+					// Chunks returning only wordless cues retain transcript text positioned by chunk.startMs
+					const chunkStartMs = chunk ? chunk.startMs : cue.startMs;
+					const chunkEndMs = chunk ? chunk.endMs : cue.endMs;
+					const tokens = cue.text.trim().split(/\s+/).filter(Boolean);
+					if (tokens.length > 0) {
+						const totalSpanMs = Math.max(
+							chunkEndMs - chunkStartMs,
+							tokens.length * 200,
+						);
+						const wordDuration = Math.max(50, Math.floor(totalSpanMs / tokens.length));
+						tokens.forEach((token, idx) => {
+							const wStart = chunkStartMs + idx * wordDuration;
+							const wEnd = Math.min(chunkEndMs, wStart + wordDuration);
+							words.push({
+								text: token,
+								startMs: wStart,
+								endMs: Math.max(wStart + 50, wEnd),
+								leadingSpace: idx > 0,
+							});
+						});
+					}
 				}
 			}
 			return words;

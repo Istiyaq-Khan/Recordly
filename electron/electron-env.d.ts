@@ -694,7 +694,19 @@ interface Window {
 			canceled?: boolean;
 			error?: string;
 		}>;
-		openParakeetModelPicker: () => Promise<{
+		openParakeetModelPicker: (options?: { mode?: "directory" | "file" }) => Promise<{
+			success: boolean;
+			path?: string;
+			canceled?: boolean;
+			error?: string;
+		}>;
+		openParakeetModelFilePicker: () => Promise<{
+			success: boolean;
+			path?: string;
+			canceled?: boolean;
+			error?: string;
+		}>;
+		openParakeetModelDirectoryPicker: () => Promise<{
 			success: boolean;
 			path?: string;
 			canceled?: boolean;

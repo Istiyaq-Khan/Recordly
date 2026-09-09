@@ -1,4 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { get as httpsGet } from "node:https";
@@ -9,6 +10,7 @@ import type Electron from "electron";
 import {
 	PARAKEET_MODEL_DIR,
 	PARAKEET_MODEL_DOWNLOAD_BASE_URL,
+	PARAKEET_MODEL_FILE_METADATA,
 	PARAKEET_MODEL_FILES,
 	SHERPA_ONNX_RUNTIME_ASSETS,
 	SHERPA_ONNX_RUNTIME_DIR,
@@ -89,7 +91,9 @@ export async function findExistingSherpaOnnxExecutable(
 					userHome,
 					".local",
 					"bin",
-					process.platform === "win32" ? "sherpa-onnx-offline.exe" : "sherpa-onnx-offline",
+					process.platform === "win32"
+						? "sherpa-onnx-offline.exe"
+						: "sherpa-onnx-offline",
 				)
 			: null,
 	].filter((value): value is string => Boolean(value));
@@ -184,14 +188,22 @@ export async function ensureSherpaOnnxRuntimeBinary(
 		const archivePath = path.join(tempDir, asset.archiveName);
 
 		try {
-			await downloadSingleFile(asset.url, archivePath, (bytesReceived) => {
-				const estimatedTotal = 26 * 1024 * 1024;
-				const p = Math.min(60, Math.round((bytesReceived / estimatedTotal) * 60));
-				onProgress?.(
-					p,
-					`Downloading sherpa-onnx runtime (${(bytesReceived / 1024 / 1024).toFixed(1)} MB)...`,
-				);
-			});
+			await downloadSingleFile(
+				asset.url,
+				archivePath,
+				(bytesReceived) => {
+					const estimatedTotal = asset.expectedSize || 26 * 1024 * 1024;
+					const p = Math.min(60, Math.round((bytesReceived / estimatedTotal) * 60));
+					onProgress?.(
+						p,
+						`Downloading sherpa-onnx runtime (${(bytesReceived / 1024 / 1024).toFixed(1)} MB)...`,
+					);
+				},
+				{
+					expectedSize: asset.expectedSize,
+					expectedSha256: asset.expectedSha256,
+				},
+			);
 
 			onProgress?.(65, "Extracting sherpa-onnx runtime archive...");
 
@@ -246,19 +258,31 @@ export async function ensureSherpaOnnxRuntimeBinary(
 			const dllFiles: Array<{ name: string; srcPath: string }> = [];
 			if (process.platform === "win32") {
 				if (hasLib) {
-					const libEntries = await fs.readdir(extractedLibDir).catch(() => [] as string[]);
+					const libEntries = await fs
+						.readdir(extractedLibDir)
+						.catch(() => [] as string[]);
 					for (const file of libEntries) {
 						if (file.toLowerCase().endsWith(".dll")) {
-							dllFiles.push({ name: file, srcPath: path.join(extractedLibDir, file) });
+							dllFiles.push({
+								name: file,
+								srcPath: path.join(extractedLibDir, file),
+							});
 						}
 					}
 				}
 				if (hasBin) {
-					const binEntries = await fs.readdir(extractedBinDir).catch(() => [] as string[]);
+					const binEntries = await fs
+						.readdir(extractedBinDir)
+						.catch(() => [] as string[]);
 					for (const file of binEntries) {
 						if (file.toLowerCase().endsWith(".dll")) {
-							if (!dllFiles.some((d) => d.name.toLowerCase() === file.toLowerCase())) {
-								dllFiles.push({ name: file, srcPath: path.join(extractedBinDir, file) });
+							if (
+								!dllFiles.some((d) => d.name.toLowerCase() === file.toLowerCase())
+							) {
+								dllFiles.push({
+									name: file,
+									srcPath: path.join(extractedBinDir, file),
+								});
 							}
 						}
 					}
@@ -290,7 +314,12 @@ export async function ensureSherpaOnnxRuntimeBinary(
 					await fs.mkdir(devArchDir, { recursive: true });
 					await fs.cp(targetBinDir, devArchDir, { recursive: true });
 
-					const devPlatformDir = resolveUnpackedAppPath("electron", "native", "bin", platformShort);
+					const devPlatformDir = resolveUnpackedAppPath(
+						"electron",
+						"native",
+						"bin",
+						platformShort,
+					);
 					await fs.mkdir(devPlatformDir, { recursive: true });
 					await fs.cp(targetBinDir, devPlatformDir, { recursive: true });
 
@@ -320,19 +349,23 @@ export async function ensureSherpaOnnxRuntimeBinary(
 					path.join(directRuntimeBinDir, asset.binaryName),
 				];
 				for (const exePath of stagedPathsToChmod) {
-					await fs.chmod(exePath, 0o755).catch(() => {});
+					await fs.chmod(exePath, 0o755).catch(() => undefined);
 				}
 
 				if (hasLib) {
 					const libEntries = await fs.readdir(targetLibDir).catch(() => [] as string[]);
 					for (const file of libEntries) {
-						await fs.chmod(path.join(targetLibDir, file), 0o755).catch(() => {});
+						await fs.chmod(path.join(targetLibDir, file), 0o755).catch(() => undefined);
 					}
 				}
 
 				if (process.platform === "darwin") {
-					await execFileAsync("xattr", ["-cr", SHERPA_ONNX_RUNTIME_DIR]).catch(() => {});
-					await execFileAsync("xattr", ["-cr", userDataRuntimeDir]).catch(() => {});
+					await execFileAsync("xattr", ["-cr", SHERPA_ONNX_RUNTIME_DIR]).catch(
+						() => undefined,
+					);
+					await execFileAsync("xattr", ["-cr", userDataRuntimeDir]).catch(
+						() => undefined,
+					);
 				}
 			}
 
@@ -351,14 +384,17 @@ export async function ensureSherpaOnnxRuntimeBinary(
 					timeout: 5000,
 				});
 				if (probe.error) {
-					console.warn("[sherpa-onnx] Sanity check test run notice:", probe.error.message);
+					console.warn(
+						"[sherpa-onnx] Sanity check test run notice:",
+						probe.error.message,
+					);
 				}
 			}
 
 			onProgress?.(100, "sherpa-onnx runtime installed successfully.");
 			return finalExecutablePath;
 		} finally {
-			await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+			await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 		}
 	})().finally(() => {
 		activeSherpaDownloadPromise = null;
@@ -434,10 +470,16 @@ export async function getParakeetModelStatus(): Promise<ParakeetModelStatus> {
 	}
 }
 
+interface DownloadVerificationOptions {
+	expectedSize?: number;
+	expectedSha256?: string;
+}
+
 function downloadSingleFile(
 	url: string,
 	destinationPath: string,
 	onByteChunk: (bytesReceived: number) => void,
+	verification?: DownloadVerificationOptions,
 ): Promise<void> {
 	const request = (currentUrl: string, redirectCount = 0): Promise<void> => {
 		return new Promise((resolve, reject) => {
@@ -470,30 +512,89 @@ function downloadSingleFile(
 					return;
 				}
 
+				const contentLengthHeader = response.headers["content-length"];
+				if (contentLengthHeader && verification?.expectedSize !== undefined) {
+					const contentLength = Number.parseInt(contentLengthHeader, 10);
+					if (
+						Number.isFinite(contentLength) &&
+						contentLength !== verification.expectedSize
+					) {
+						response.destroy(
+							new Error(
+								`Content length header mismatch for ${path.basename(destinationPath)}: expected ${verification.expectedSize} bytes, got ${contentLength} bytes`,
+							),
+						);
+						return;
+					}
+				}
+
+				const hash = createHash("sha256");
+				let bytesReceived = 0;
 				const fileStream = createWriteStream(destinationPath);
+
+				const cleanupAndReject = async (err: Error) => {
+					response.destroy(err);
+					fileStream.destroy(err);
+					await fs.rm(destinationPath, { force: true }).catch(() => undefined);
+					reject(err);
+				};
+
 				response.on("data", (chunk: Buffer) => {
+					bytesReceived += chunk.length;
+					hash.update(chunk);
 					onByteChunk(chunk.length);
 				});
 
 				response.on("error", (error) => {
-					fileStream.destroy(error);
+					void cleanupAndReject(error);
 				});
 
 				fileStream.on("error", (error) => {
-					response.destroy(error);
-					reject(error);
+					void cleanupAndReject(error);
 				});
 
 				fileStream.on("finish", () => {
+					if (
+						verification?.expectedSize !== undefined &&
+						bytesReceived !== verification.expectedSize
+					) {
+						void cleanupAndReject(
+							new Error(
+								`Downloaded size mismatch for ${path.basename(destinationPath)}: expected ${verification.expectedSize} bytes, received ${bytesReceived} bytes`,
+							),
+						);
+						return;
+					}
+
+					if (verification?.expectedSha256) {
+						const actualDigest = hash.digest("hex").toLowerCase();
+						const expectedDigest = verification.expectedSha256.toLowerCase();
+						if (actualDigest !== expectedDigest) {
+							void cleanupAndReject(
+								new Error(
+									`SHA-256 integrity check failed for ${path.basename(destinationPath)}: expected ${expectedDigest}, got ${actualDigest}`,
+								),
+							);
+							return;
+						}
+					}
+
 					resolve();
 				});
 
 				response.pipe(fileStream);
 			});
 
-			req.on("error", reject);
+			req.on("error", (err) => {
+				void fs.rm(destinationPath, { force: true }).catch(() => undefined);
+				reject(err);
+			});
 			req.on("timeout", () => {
-				req.destroy(new Error(`Download timed out for ${path.basename(destinationPath)}`));
+				const timeoutErr = new Error(
+					`Download timed out for ${path.basename(destinationPath)}`,
+				);
+				void fs.rm(destinationPath, { force: true }).catch(() => undefined);
+				req.destroy(timeoutErr);
 			});
 		});
 	};
@@ -521,6 +622,7 @@ export async function downloadParakeetModel(webContents: Electron.WebContents): 
 		for (const fileName of PARAKEET_MODEL_FILES) {
 			const fileUrl = `${PARAKEET_MODEL_DOWNLOAD_BASE_URL}/${fileName}`;
 			const destPath = path.join(tempDownloadDir, fileName);
+			const metadata = PARAKEET_MODEL_FILE_METADATA[fileName];
 
 			sendParakeetModelDownloadProgress(webContents, {
 				status: "downloading",
@@ -532,19 +634,24 @@ export async function downloadParakeetModel(webContents: Electron.WebContents): 
 				path: null,
 			});
 
-			await downloadSingleFile(fileUrl, destPath, (bytesChunk) => {
-				totalBytesDownloaded += bytesChunk;
-				const percent = Math.min(
-					99,
-					Math.round((totalBytesDownloaded / ESTIMATED_TOTAL_BYTES) * 100),
-				);
-				sendParakeetModelDownloadProgress(webContents, {
-					status: "downloading",
-					progress: percent,
-					currentFile: fileName,
-					path: null,
-				});
-			});
+			await downloadSingleFile(
+				fileUrl,
+				destPath,
+				(bytesChunk) => {
+					totalBytesDownloaded += bytesChunk;
+					const percent = Math.min(
+						99,
+						Math.round((totalBytesDownloaded / ESTIMATED_TOTAL_BYTES) * 100),
+					);
+					sendParakeetModelDownloadProgress(webContents, {
+						status: "downloading",
+						progress: percent,
+						currentFile: fileName,
+						path: null,
+					});
+				},
+				metadata,
+			);
 		}
 
 		// Move downloaded files to final directory

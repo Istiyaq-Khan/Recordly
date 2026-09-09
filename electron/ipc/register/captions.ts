@@ -257,11 +257,50 @@ export function registerCaptionHandlers() {
 		}
 	});
 
-	ipcMain.handle("open-parakeet-model-picker", async () => {
+	ipcMain.handle(
+		"open-parakeet-model-picker",
+		async (_, options?: { mode?: "directory" | "file" }) => {
+			try {
+				const isDarwin = process.platform === "darwin";
+				const isFileMode = options?.mode === "file";
+				const properties: Array<"openDirectory" | "openFile"> = isDarwin
+					? ["openDirectory", "openFile"]
+					: isFileMode
+						? ["openFile"]
+						: ["openDirectory"];
+
+				const result = await dialog.showOpenDialog({
+					title: isFileMode
+						? "Select Parakeet Model File (.onnx or tokens.txt)"
+						: "Select Parakeet Model Folder",
+					properties,
+					filters:
+						isDarwin || isFileMode
+							? [
+									{ name: "ONNX Models or Tokens", extensions: ["onnx", "txt"] },
+									{ name: "All Files", extensions: ["*"] },
+								]
+							: undefined,
+				});
+
+				if (result.canceled || result.filePaths.length === 0) {
+					return { success: false, canceled: true };
+				}
+
+				approveUserPath(result.filePaths[0]);
+				return { success: true, path: result.filePaths[0] };
+			} catch (error) {
+				console.error("Failed to open Parakeet model picker:", error);
+				return { success: false, error: String(error) };
+			}
+		},
+	);
+
+	ipcMain.handle("open-parakeet-model-file-picker", async () => {
 		try {
 			const result = await dialog.showOpenDialog({
-				title: "Select Parakeet Model Folder or File",
-				properties: ["openDirectory", "openFile"],
+				title: "Select Parakeet Model File (.onnx or tokens.txt)",
+				properties: ["openFile"],
 				filters: [
 					{ name: "ONNX Models or Tokens", extensions: ["onnx", "txt"] },
 					{ name: "All Files", extensions: ["*"] },
@@ -275,7 +314,26 @@ export function registerCaptionHandlers() {
 			approveUserPath(result.filePaths[0]);
 			return { success: true, path: result.filePaths[0] };
 		} catch (error) {
-			console.error("Failed to open Parakeet model picker:", error);
+			console.error("Failed to open Parakeet model file picker:", error);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle("open-parakeet-model-directory-picker", async () => {
+		try {
+			const result = await dialog.showOpenDialog({
+				title: "Select Parakeet Model Folder",
+				properties: ["openDirectory"],
+			});
+
+			if (result.canceled || result.filePaths.length === 0) {
+				return { success: false, canceled: true };
+			}
+
+			approveUserPath(result.filePaths[0]);
+			return { success: true, path: result.filePaths[0] };
+		} catch (error) {
+			console.error("Failed to open Parakeet model directory picker:", error);
 			return { success: false, error: String(error) };
 		}
 	});

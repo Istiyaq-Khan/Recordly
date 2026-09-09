@@ -264,5 +264,103 @@ Input #0, wav, from 'sample.wav':
 			expect(mergedCues[0].startMs).toBe(18_000);
 			expect(mergedCues[0].endMs).toBe(20_600);
 		});
+
+		it("does not delete valid short words like 'a' when followed by 'again' (subword min length >= 3)", () => {
+			const chunk0Words: CaptionWordPayload[] = [
+				{ text: "take", startMs: 19_200, endMs: 19_500 },
+				{ text: "a", startMs: 19_550, endMs: 19_650 },
+			];
+
+			const chunk1Words: CaptionWordPayload[] = [
+				{ text: "again", startMs: 19_600, endMs: 19_950 },
+				{ text: "step", startMs: 20_000, endMs: 20_400 },
+			];
+
+			const merged = mergeAndDeduplicateWords(
+				[chunk0Words, chunk1Words],
+				[dummyChunk0, dummyChunk1],
+			);
+
+			// "a" must not be treated as a subword of "again"
+			expect(merged.map((w) => w.text)).toEqual(["take", "a", "again", "step"]);
+		});
+
+		it("deduplicates audio overlap strictly by startMs < prevChunk.endMs even when marked as silence boundary", () => {
+			const overlappingSilenceChunk0: AudioChunk = {
+				index: 0,
+				startSec: 0,
+				endSec: 20.0,
+				durationSec: 20.0,
+				startMs: 0,
+				endMs: 20_000,
+				isSilenceBoundary: true,
+			};
+
+			const overlappingSilenceChunk1: AudioChunk = {
+				index: 1,
+				startSec: 19.5,
+				endSec: 35.0,
+				durationSec: 15.5,
+				startMs: 19_500, // < 20_000 (overlap)
+				endMs: 35_000,
+				isSilenceBoundary: true,
+			};
+
+			const chunk0Words: CaptionWordPayload[] = [
+				{ text: "hello", startMs: 18_000, endMs: 18_500 },
+				{ text: "world", startMs: 19_600, endMs: 19_900 },
+			];
+
+			const chunk1Words: CaptionWordPayload[] = [
+				{ text: "world", startMs: 19_620, endMs: 19_920 }, // duplicate in overlap
+				{ text: "peace", startMs: 20_200, endMs: 20_600 },
+			];
+
+			const merged = mergeAndDeduplicateWords(
+				[chunk0Words, chunk1Words],
+				[overlappingSilenceChunk0, overlappingSilenceChunk1],
+			);
+
+			expect(merged.map((w) => w.text)).toEqual(["hello", "world", "peace"]);
+		});
+
+		it("retains transcript text from chunks returning only wordless cues when merged with timestamped chunks", () => {
+			const chunk0Cues: CaptionCuePayload[] = [
+				{
+					id: "caption-1",
+					startMs: 1_000,
+					endMs: 3_000,
+					text: "hello world",
+					words: [
+						{ text: "hello", startMs: 1_000, endMs: 1_800 },
+						{ text: "world", startMs: 2_000, endMs: 2_900 },
+					],
+				},
+			];
+
+			// Chunk 1 returns only wordless cues (e.g. fallback text without token timestamps)
+			const chunk1Cues: CaptionCuePayload[] = [
+				{
+					id: "caption-2",
+					startMs: 20_000,
+					endMs: 23_000,
+					text: "unsegmented phrase here",
+				},
+			];
+
+			const mergedCues = mergeAndDeduplicateChunkCues(
+				[chunk0Cues, chunk1Cues],
+				[dummyChunk0, dummyChunk1],
+			);
+
+			expect(mergedCues.length).toBe(1);
+			const allTexts = mergedCues[0].words?.map((w) => w.text);
+			expect(allTexts).toContain("hello");
+			expect(allTexts).toContain("world");
+			expect(allTexts).toContain("unsegmented");
+			expect(allTexts).toContain("phrase");
+			expect(allTexts).toContain("here");
+			expect(mergedCues[0].text).toContain("unsegmented phrase here");
+		});
 	});
 });
