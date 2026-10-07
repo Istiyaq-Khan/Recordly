@@ -27,3 +27,8 @@ export const COMPANION_AUDIO_LAYOUTS = [
 export const CURSOR_TELEMETRY_VERSION = 2;
 export const CURSOR_SAMPLE_INTERVAL_MS = 33;
 export const MAX_CURSOR_SAMPLES = 60 * 60 * 30; // 1 hour @ 30Hz
+
+export const DUBBING_MODELS_DIR = path.join(USER_DATA_PATH, "models", "dubbing");
+export const TRANSLATION_MODELS_DIR = path.join(USER_DATA_PATH, "models", "translation");
+export const DUBBING_CACHE_DIR = path.join(USER_DATA_PATH, "cache", "dubbing");
+export const DEFAULT_NLLB_MODEL_ID = "Xenova/nllb-200-distilled-600M";

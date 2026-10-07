@@ -8,6 +8,7 @@ import type {
 	CropRegion,
 	CursorStyle,
 	CursorTelemetryPoint,
+	DubbingTrack,
 	Padding,
 	SourceAudioTrackSettings,
 	SpeedRegion,
@@ -94,6 +95,7 @@ interface VideoExporterConfig extends ExportConfig {
 	sourceAudioFallbackPaths?: string[];
 	sourceAudioFallbackStartDelayMsByPath?: Record<string, number>;
 	sourceAudioTrackSettings?: SourceAudioTrackSettings;
+	dubbingTrack?: DubbingTrack | null;
 	previewWidth?: number;
 	previewHeight?: number;
 	onProgress?: (progress: ExportProgress) => void;
@@ -391,9 +393,10 @@ export class VideoExporter {
 				throw this.encoderError;
 			}
 
-			if (hasAudio && !shouldUseFfmpegAudioFallback && !this.cancelled) {
+			const hasDubbingTrack = Boolean(this.config.dubbingTrack?.isActive);
+			if ((hasAudio || hasDubbingTrack) && !shouldUseFfmpegAudioFallback && !this.cancelled) {
 				const demuxer = this.streamingDecoder.getDemuxer();
-				if (demuxer || hasAudioRegions || hasSourceAudioFallback) {
+				if (demuxer || hasAudioRegions || hasSourceAudioFallback || hasDubbingTrack) {
 					this.audioProcessor = new AudioProcessor();
 					this.audioProcessor.setOnProgress((progress) => {
 						this.reportFinalizingProgress(totalFrames, 99, progress);
@@ -413,6 +416,7 @@ export class VideoExporter {
 								this.config.sourceAudioFallbackStartDelayMsByPath,
 								this.config.sourceAudioTrackSettings,
 								this.config.clipRegions,
+								this.config.dubbingTrack,
 							),
 							"audio processing",
 							"audio",
@@ -566,7 +570,8 @@ export class VideoExporter {
 		if (
 			!videoInfo.hasAudio &&
 			sourceAudioFallbackPaths.length === 0 &&
-			audioRegions.length === 0
+			audioRegions.length === 0 &&
+			!this.config.dubbingTrack?.isActive
 		) {
 			return { audioMode: "none" };
 		}
@@ -578,7 +583,8 @@ export class VideoExporter {
 			sourceAudioFallbackPaths.length > 1 ||
 			hasTimedSourceAudioFallback ||
 			hasNonDefaultSourceTrackSettings(this.config.sourceAudioTrackSettings) ||
-			(this.config.clipRegions ?? []).some((clip) => Boolean(clip.muted))
+			(this.config.clipRegions ?? []).some((clip) => Boolean(clip.muted)) ||
+			Boolean(this.config.dubbingTrack?.isActive)
 		) {
 			const sourceDurationMs = Math.max(
 				0,
@@ -592,6 +598,7 @@ export class VideoExporter {
 			const trimRegions = this.config.trimRegions ?? [];
 			const canUsePrimaryAudioFiltergraph =
 				!requiresClipTimelineRendering(this.config.clipRegions) &&
+				!this.config.dubbingTrack?.isActive &&
 				Boolean(primaryAudioSourcePath) &&
 				!hasTimedSourceAudioFallback &&
 				(usesEmbeddedPrimaryAudio ||
@@ -863,6 +870,7 @@ export class VideoExporter {
 						this.config.sourceAudioFallbackStartDelayMsByPath,
 						this.config.sourceAudioTrackSettings,
 						this.config.clipRegions,
+						this.config.dubbingTrack,
 					),
 					"native edited audio rendering",
 					"audio",
@@ -961,6 +969,7 @@ export class VideoExporter {
 						this.config.sourceAudioFallbackStartDelayMsByPath,
 						this.config.sourceAudioTrackSettings,
 						this.config.clipRegions,
+						this.config.dubbingTrack,
 					),
 					"ffmpeg edited audio rendering",
 					"audio",

@@ -323,6 +323,7 @@ export function useExportRunner(input: ExportRunnerInput) {
 						sourceAudioFallbackStartDelayMsByPath:
 							audio.sourceAudioFallbackStartDelayMsByPath,
 						sourceAudioTrackSettings: sourceAudioTrackSettingsForExport,
+						dubbingTrack: timeline.dubbingTrack,
 					};
 
 					const Exporter =

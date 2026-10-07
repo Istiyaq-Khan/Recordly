@@ -579,4 +579,51 @@ describe("user preferences stay independent from projects and presets", () => {
 		])
 			expect(loaded).not.toHaveProperty(key);
 	});
+
+	it("normalizes and preserves dubbing preferences correctly", () => {
+		vi.stubGlobal("localStorage", createStorageMock());
+
+		// Test default values
+		const defaults = loadEditorPreferences();
+		expect(defaults.dubbingTargetLanguage).toBe("es");
+		expect(defaults.dubbingTtsBackend).toBe("cloud");
+		expect(defaults.dubbingCloudProvider).toBe("fish-audio");
+		expect(defaults.dubbingTranslationEngine).toBe("local-nllb");
+		expect(defaults.dubbingTranslationQuantization).toBe("int8");
+		expect(defaults.dubbingApiTranslationProvider).toBe("openai");
+
+		// Test saving valid customized dubbing preferences
+		saveEditorPreferences({
+			dubbingTargetLanguage: "ja",
+			dubbingTtsBackend: "local",
+			dubbingCloudProvider: "fish-audio",
+			dubbingTranslationEngine: "api",
+			dubbingTranslationQuantization: "fp16",
+			dubbingApiTranslationProvider: "deepl",
+		});
+
+		const updated = loadEditorPreferences();
+		expect(updated.dubbingTargetLanguage).toBe("ja");
+		expect(updated.dubbingTtsBackend).toBe("local");
+		expect(updated.dubbingTranslationEngine).toBe("api");
+		expect(updated.dubbingTranslationQuantization).toBe("fp16");
+		expect(updated.dubbingApiTranslationProvider).toBe("deepl");
+
+		// Test invalid values normalize to safe fallbacks
+		const normalized = normalizeEditorPreferences({
+			dubbingTargetLanguage: 1234,
+			dubbingTtsBackend: "unknown-tts",
+			dubbingCloudProvider: "invalid-provider",
+			dubbingTranslationEngine: "bad-engine",
+			dubbingTranslationQuantization: "int4",
+			dubbingApiTranslationProvider: "google",
+		});
+		expect(normalized.dubbingTargetLanguage).toBe("es");
+		expect(normalized.dubbingTtsBackend).toBe("cloud");
+		expect(normalized.dubbingCloudProvider).toBe("fish-audio");
+		expect(normalized.dubbingTranslationEngine).toBe("local-nllb");
+		expect(normalized.dubbingTranslationQuantization).toBe("int8");
+		expect(normalized.dubbingApiTranslationProvider).toBe("openai");
+	});
 });
+

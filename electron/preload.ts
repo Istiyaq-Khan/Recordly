@@ -764,6 +764,93 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	}) => {
 		return ipcRenderer.invoke("generate-auto-captions", options);
 	},
+	getDubbingStatus: () => {
+		return ipcRenderer.invoke("dubbing:get-status");
+	},
+	getDubbingSupportedLanguages: () => {
+		return ipcRenderer.invoke("dubbing:get-supported-languages");
+	},
+	getTranslationModelStatus: (quantization?: "int8" | "fp16" | "fp32") => {
+		return ipcRenderer.invoke("dubbing:get-translation-model-status", quantization);
+	},
+	downloadTranslationModel: (quantization?: "int8" | "fp16" | "fp32") => {
+		return ipcRenderer.invoke("dubbing:download-translation-model", quantization);
+	},
+	onTranslationModelDownloadProgress: (
+		callback: (state: {
+			status: "idle" | "downloading" | "downloaded" | "error";
+			progress: number;
+			quantization: "int8" | "fp16" | "fp32";
+			path?: string | null;
+			error?: string;
+		}) => void,
+	) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			payload: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				quantization: "int8" | "fp16" | "fp32";
+				path?: string | null;
+				error?: string;
+			},
+		) => callback(payload);
+		ipcRenderer.on("dubbing-translation-model-download-progress", listener);
+		return () =>
+			ipcRenderer.removeListener("dubbing-translation-model-download-progress", listener);
+	},
+	extractVoiceReference: (options: {
+		videoPath: string;
+		startMs?: number;
+		durationMs?: number;
+		existingCues?: any[];
+	}) => {
+		return ipcRenderer.invoke("dubbing:extract-voice-reference", options);
+	},
+	translateTranscript: (options: {
+		textCues: Array<{ id: string; text: string }>;
+		sourceLang?: string;
+		targetLang: string;
+		engine: "local-nllb" | "api";
+		quantization?: "int8" | "fp16" | "fp32";
+		apiProvider?: "openai" | "deepl";
+		apiKey?: string;
+	}) => {
+		return ipcRenderer.invoke("dubbing:translate", options);
+	},
+	synthesizeDubbedAudioApi: (options: {
+		text: string;
+		referenceAudioPath: string;
+		referenceTranscript: string;
+		provider: "fish-audio" | "acedatacloud";
+		targetLanguage?: string;
+		apiKey?: string;
+		format?: "wav";
+	}) => {
+		return ipcRenderer.invoke("dubbing:synthesize-api", options);
+	},
+	synthesizeDubbedAudioLocal: (options: {
+		text: string;
+		referenceAudioPath: string;
+		referenceTranscript: string;
+		targetLanguage?: string;
+	}) => {
+		return ipcRenderer.invoke("dubbing:synthesize-local", options);
+	},
+	alignDubbedCaptions: (options: {
+		dubbedAudioPath: string;
+		targetLanguage: string;
+		whisperExecutablePath?: string;
+		whisperModelPath?: string;
+	}) => {
+		return ipcRenderer.invoke("dubbing:align-captions", options);
+	},
+	saveDubbingApiKey: (payload: { provider: string; key: string }) => {
+		return ipcRenderer.invoke("dubbing:save-api-key", payload);
+	},
+	getDubbingApiKeys: () => {
+		return ipcRenderer.invoke("dubbing:get-api-keys");
+	},
 	setCurrentVideoPath: (
 		path: string,
 		options?: {

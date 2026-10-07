@@ -1,3 +1,4 @@
+import type { DubbingTrack } from "@/components/video-editor/types";
 import { buildResolvedAudioPlan, type SourceTrackId } from "./audioRoutingEngine";
 
 export interface SourceTrackRoutingPolicy {
@@ -11,10 +12,12 @@ export interface SourceTrackRoutingPolicy {
 export function resolveSourceTrackRoutingPolicy(
 	videoResource: string | null | undefined,
 	sourceAudioFallbackPaths: string[] | null | undefined,
+	dubbingTrack?: DubbingTrack | null,
 ): SourceTrackRoutingPolicy {
 	const plan = buildResolvedAudioPlan({
 		videoResource,
 		sourceAudioFallbackPaths,
+		dubbingTrack,
 	});
 
 	return {

@@ -728,6 +728,101 @@ interface Window {
 			message?: string;
 			error?: string;
 		}>;
+		getDubbingStatus: () => Promise<{
+			localModelReady: boolean;
+			localModelQuantization: "int8" | "fp16" | "fp32" | null;
+			localEngineInstalled: boolean;
+			hasFishApiKey: boolean;
+			hasAceDataApiKey: boolean;
+			hasOpenAiApiKey: boolean;
+			hasDeepLApiKey: boolean;
+		}>;
+		getDubbingSupportedLanguages: () => Promise<
+			Array<{ code: string; floresCode: string; name: string; nativeName: string }>
+		>;
+		getTranslationModelStatus: (quantization?: "int8" | "fp16" | "fp32") => Promise<{
+			success: boolean;
+			exists: boolean;
+			path: string | null;
+			quantization: string;
+		}>;
+		downloadTranslationModel: (quantization?: "int8" | "fp16" | "fp32") => Promise<{
+			success: boolean;
+			path?: string;
+			error?: string;
+		}>;
+		onTranslationModelDownloadProgress: (
+			callback: (state: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				quantization: "int8" | "fp16" | "fp32";
+				path?: string | null;
+				error?: string;
+			}) => void,
+		) => () => void;
+		extractVoiceReference: (options: {
+			videoPath: string;
+			startMs?: number;
+			durationMs?: number;
+			existingCues?: any[];
+		}) => Promise<{
+			success: boolean;
+			referenceAudioPath?: string;
+			durationMs?: number;
+			suggestedTranscript?: string;
+			error?: string;
+		}>;
+		translateTranscript: (options: {
+			textCues: Array<{ id: string; text: string }>;
+			sourceLang?: string;
+			targetLang: string;
+			engine: "local-nllb" | "api";
+			quantization?: "int8" | "fp16" | "fp32";
+			apiProvider?: "openai" | "deepl";
+			apiKey?: string;
+		}) => Promise<{
+			success: boolean;
+			translatedCues?: Array<{ id: string; text: string }>;
+			fullText?: string;
+			error?: string;
+		}>;
+		synthesizeDubbedAudioApi: (options: {
+			text: string;
+			referenceAudioPath: string;
+			referenceTranscript: string;
+			provider: "fish-audio" | "acedatacloud";
+			targetLanguage?: string;
+			apiKey?: string;
+			format?: "wav";
+		}) => Promise<{
+			success: boolean;
+			dubbedAudioPath?: string;
+			durationMs?: number;
+			error?: string;
+		}>;
+		synthesizeDubbedAudioLocal: (options: {
+			text: string;
+			referenceAudioPath: string;
+			referenceTranscript: string;
+			targetLanguage?: string;
+		}) => Promise<{
+			success: boolean;
+			dubbedAudioPath?: string;
+			durationMs?: number;
+			error?: string;
+		}>;
+		alignDubbedCaptions: (options: {
+			dubbedAudioPath: string;
+			targetLanguage: string;
+			whisperExecutablePath?: string;
+			whisperModelPath?: string;
+		}) => Promise<{
+			success: boolean;
+			cues?: any[];
+			error?: string;
+		}>;
+		saveDubbingApiKey: (payload: { provider: string; key: string }) => Promise<{ success: boolean; error?: string }>;
+		getDubbingApiKeys: () => Promise<Record<string, boolean>>;
 		setCurrentVideoPath: (
 			path: string,
 			options?: {

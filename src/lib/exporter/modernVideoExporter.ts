@@ -8,6 +8,7 @@ import type {
 	CursorClickEffectStyle,
 	CursorStyle,
 	CursorTelemetryPoint,
+	DubbingTrack,
 	Padding,
 	SourceAudioTrackSettings,
 	SpeedRegion,
@@ -149,6 +150,7 @@ interface VideoExporterConfig extends ExportConfig {
 	sourceAudioFallbackPaths?: string[];
 	sourceAudioFallbackStartDelayMsByPath?: Record<string, number>;
 	sourceAudioTrackSettings?: SourceAudioTrackSettings;
+	dubbingTrack?: DubbingTrack | null;
 	previewWidth?: number;
 	previewHeight?: number;
 	onProgress?: (progress: ExportProgress) => void;
@@ -818,7 +820,8 @@ export class ModernVideoExporter {
 					if (
 						demuxer ||
 						(this.config.audioRegions ?? []).length > 0 ||
-						(this.config.sourceAudioFallbackPaths ?? []).length > 0
+						(this.config.sourceAudioFallbackPaths ?? []).length > 0 ||
+						Boolean(this.config.dubbingTrack?.isActive)
 					) {
 						this.audioProcessor = new AudioProcessor();
 						this.audioProcessor.setOnProgress((progress) => {
@@ -839,6 +842,7 @@ export class ModernVideoExporter {
 									this.config.sourceAudioFallbackStartDelayMsByPath,
 									this.config.sourceAudioTrackSettings,
 									this.config.clipRegions,
+									this.config.dubbingTrack,
 								),
 								"audio processing",
 								"audio",
@@ -1480,7 +1484,8 @@ export class ModernVideoExporter {
 		if (
 			!videoInfo.hasAudio &&
 			sourceAudioFallbackPaths.length === 0 &&
-			audioRegions.length === 0
+			audioRegions.length === 0 &&
+			!this.config.dubbingTrack?.isActive
 		) {
 			return { audioMode: "none" };
 		}
@@ -1492,7 +1497,8 @@ export class ModernVideoExporter {
 			sourceAudioFallbackPaths.length > 1 ||
 			hasTimedSourceAudioFallback ||
 			hasNonDefaultSourceTrackSettings(this.config.sourceAudioTrackSettings) ||
-			(this.config.clipRegions ?? []).some((clip) => Boolean(clip.muted))
+			(this.config.clipRegions ?? []).some((clip) => Boolean(clip.muted)) ||
+			Boolean(this.config.dubbingTrack?.isActive)
 		) {
 			const sourceDurationMs = Math.max(
 				0,
@@ -1515,7 +1521,8 @@ export class ModernVideoExporter {
 			const requiresRenderedEditedTrack =
 				requiresClipTimelineRendering(this.config.clipRegions) ||
 				hasNonDefaultSourceTrackSettings(this.config.sourceAudioTrackSettings) ||
-				(this.config.clipRegions ?? []).some((clip) => Boolean(clip.muted));
+				(this.config.clipRegions ?? []).some((clip) => Boolean(clip.muted)) ||
+				Boolean(this.config.dubbingTrack?.isActive);
 			const strategy =
 				canUsePrimaryAudioFiltergraph && !requiresRenderedEditedTrack
 					? classifyEditedTrackStrategy({
@@ -2149,6 +2156,7 @@ export class ModernVideoExporter {
 					this.config.sourceAudioFallbackStartDelayMsByPath,
 					this.config.sourceAudioTrackSettings,
 					this.config.clipRegions,
+					this.config.dubbingTrack,
 				),
 				description,
 				"audio",

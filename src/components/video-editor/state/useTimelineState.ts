@@ -7,6 +7,7 @@ import type {
 	CaptionCue,
 	ClipRegion,
 	CursorTelemetryPoint,
+	DubbingTrack,
 	SpeedRegion,
 	TrimRegion,
 	ZoomRegion,
@@ -38,6 +39,7 @@ export function useTimelineState() {
 	const [autoCaptionSettings, setAutoCaptionSettings] = useState<AutoCaptionSettings>(
 		DEFAULT_AUTO_CAPTION_SETTINGS,
 	);
+	const [dubbingTrack, setDubbingTrack] = useState<DubbingTrack | null>(null);
 
 	return {
 		zoomRegions,
@@ -78,5 +80,7 @@ export function useTimelineState() {
 		setAutoCaptions,
 		autoCaptionSettings,
 		setAutoCaptionSettings,
+		dubbingTrack,
+		setDubbingTrack,
 	};
 }

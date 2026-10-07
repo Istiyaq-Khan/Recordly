@@ -1,7 +1,7 @@
-import { SOURCE_AUDIO_NORMALIZE_GAIN } from "@/components/video-editor/audio/audioTypes";
 import type {
 	AudioRegion,
 	ClipRegion,
+	DubbingTrack,
 	SourceAudioTrackSettings,
 	SpeedRegion,
 } from "@/components/video-editor/types";
@@ -11,6 +11,7 @@ import {
 	getTimelineDurationMs,
 } from "@/components/video-editor/types";
 import { buildResolvedAudioPlan } from "@/lib/exporter/audioRoutingEngine";
+import { SOURCE_AUDIO_NORMALIZE_GAIN } from "@/components/video-editor/audio/audioTypes";
 import { estimateCompanionAudioStartDelaySeconds } from "@/lib/mediaTiming";
 import { AudioMediaProcessor } from "./audioMediaProcessor";
 import {
@@ -40,6 +41,7 @@ export class OfflineAudioProcessor extends AudioMediaProcessor {
 		sourceAudioTrackSettings: SourceAudioTrackSettings | undefined,
 		clipRegions: ClipRegion[] | undefined,
 		muxer: VideoMuxer,
+		dubbingTrack?: DubbingTrack | null,
 	): Promise<void> {
 		const prepared = await this.prepareOfflineRender(
 			videoUrl,
@@ -50,6 +52,7 @@ export class OfflineAudioProcessor extends AudioMediaProcessor {
 			sourceAudioFallbackStartDelayMsByPath,
 			sourceAudioTrackSettings,
 			clipRegions,
+			dubbingTrack,
 		);
 		if (this.cancelled) return;
 		await this.renderAndEncodeChunked(prepared, muxer);
@@ -64,6 +67,7 @@ export class OfflineAudioProcessor extends AudioMediaProcessor {
 		sourceAudioFallbackStartDelayMsByPath?: Record<string, number>,
 		sourceAudioTrackSettings?: SourceAudioTrackSettings,
 		clipRegions?: ClipRegion[],
+		dubbingTrack?: DubbingTrack | null,
 	): Promise<PreparedOfflineRender> {
 		if (this.cancelled) throw new Error("Export cancelled");
 		this.onProgress?.(0);
@@ -72,6 +76,7 @@ export class OfflineAudioProcessor extends AudioMediaProcessor {
 			videoResource: videoUrl,
 			sourceAudioFallbackPaths,
 			audioRegions,
+			dubbingTrack,
 			sourceTrackGainById: {
 				mic: resolveSourceTrackGain(sourceAudioTrackSettings, "mic"),
 				system: resolveSourceTrackGain(sourceAudioTrackSettings, "system"),
@@ -112,12 +117,17 @@ export class OfflineAudioProcessor extends AudioMediaProcessor {
 			const buffer = await this.decodeAudioFromUrl(audioPath);
 			if (!buffer) continue;
 
+			const trackId = getSourceTrackIdFromPath(audioPath);
+			const gain =
+				trackId === "dubbing"
+					? (dubbingTrack?.volume ?? 1)
+					: resolveSourceTrackGain(
+							sourceAudioTrackSettings,
+							trackId as "mixed" | "system" | "mic",
+					  );
 			companionEntries.push({
 				buffer,
-				gain: resolveSourceTrackGain(
-					sourceAudioTrackSettings,
-					getSourceTrackIdFromPath(audioPath),
-				),
+				gain,
 				startDelaySec: estimateCompanionAudioStartDelaySeconds(
 					refDuration,
 					buffer.duration,

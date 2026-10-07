@@ -111,6 +111,7 @@ export type EditorEffectSection =
 	| "cursor"
 	| "captions"
 	| "caption"
+	| "dubbing"
 	| "webcam"
 	| "settings"
 	| "zoom"
@@ -660,3 +661,53 @@ function clamp(value: number, min: number, max: number) {
 	if (Number.isNaN(value)) return (min + max) / 2;
 	return Math.min(max, Math.max(min, value));
 }
+
+export interface DubbingSyncedCaptionCue {
+	id?: string;
+	start: number; // in seconds
+	end: number; // in seconds
+	startMs?: number;
+	endMs?: number;
+	text: string;
+}
+
+export interface DubbingTrack {
+	id: string;
+	targetLanguage: string;
+	language?: string;
+	sourceAudioRef?: string;
+	dubbedAudioPath: string;
+	audioPath?: string;
+	referenceVoiceSamplePath?: string;
+	referenceTranscript?: string;
+	isActive: boolean;
+	volume?: number; // 0.0 to 1.0 (defaults to 1.0)
+	durationSec?: number;
+	syncedCaptions: DubbingSyncedCaptionCue[];
+	syncedCues?: DubbingSyncedCaptionCue[];
+}
+
+export type DubbingModelQuantization = "int8" | "fp16" | "fp32";
+export type DubbingTtsBackend = "cloud" | "local";
+export type DubbingCloudProvider = "fish-audio" | "acedatacloud";
+export type DubbingTranslationEngine = "local-nllb" | "api";
+export type DubbingApiTranslationProvider = "openai" | "deepl";
+export type DubbingModelDownloadStatus = "idle" | "downloading" | "downloaded" | "error";
+
+export interface DubbingSettings {
+	targetLanguage: string;
+	backend: DubbingTtsBackend;
+	cloudProvider: DubbingCloudProvider;
+	translationEngine: DubbingTranslationEngine;
+	translationQuantization: DubbingModelQuantization;
+	apiTranslationProvider: DubbingApiTranslationProvider;
+}
+
+export const DEFAULT_DUBBING_SETTINGS: DubbingSettings = {
+	targetLanguage: "es",
+	backend: "cloud",
+	cloudProvider: "fish-audio",
+	translationEngine: "local-nllb",
+	translationQuantization: "int8",
+	apiTranslationProvider: "openai",
+};

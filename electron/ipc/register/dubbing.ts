@@ -1,0 +1,116 @@
+import { ipcMain } from "electron";
+import { alignDubbedCaptions } from "../dubbing/captionAlignment";
+import {
+	checkLocalDubbingEngineStatus,
+	synthesizeAudioWithApi,
+	synthesizeAudioWithLocalEngine,
+} from "../dubbing/fishAudio";
+import { SUPPORTED_DUBBING_LANGUAGES } from "../dubbing/nllbLanguages";
+import { extractVoiceReferenceSample } from "../dubbing/referenceAudio";
+import { hasSecureApiKey, saveSecureApiKey } from "../dubbing/storage";
+import {
+	downloadTranslationModel,
+	getTranslationModelStatus,
+	translateTranscript,
+} from "../dubbing/translation";
+import type {
+	AlignCaptionsOptions,
+	DubbingModelQuantization,
+	ExtractVoiceReferenceOptions,
+	SupportedApiKeyProvider,
+	SynthesizeApiOptions,
+	SynthesizeLocalOptions,
+	TranslateOptions,
+} from "../dubbing/types";
+
+export function registerDubbingHandlers() {
+	ipcMain.handle("dubbing:get-status", async () => {
+		const int8Status = await getTranslationModelStatus("int8");
+		const fp16Status = await getTranslationModelStatus("fp16");
+		const fp32Status = await getTranslationModelStatus("fp32");
+		const localEngine = await checkLocalDubbingEngineStatus();
+
+		return {
+			localModelReady: int8Status.exists || fp16Status.exists || fp32Status.exists,
+			localModelQuantization: int8Status.exists
+				? "int8"
+				: fp16Status.exists
+					? "fp16"
+					: fp32Status.exists
+						? "fp32"
+						: null,
+			localEngineInstalled: localEngine.installed,
+			hasFishApiKey: hasSecureApiKey("fish-audio"),
+			hasAceDataApiKey: hasSecureApiKey("acedatacloud"),
+			hasOpenAiApiKey: hasSecureApiKey("openai"),
+			hasDeepLApiKey: hasSecureApiKey("deepl"),
+		};
+	});
+
+	ipcMain.handle("dubbing:get-supported-languages", () => {
+		return SUPPORTED_DUBBING_LANGUAGES;
+	});
+
+	ipcMain.handle(
+		"dubbing:get-translation-model-status",
+		async (_, quantization?: DubbingModelQuantization) => {
+			return await getTranslationModelStatus(quantization ?? "int8");
+		},
+	);
+
+	ipcMain.handle(
+		"dubbing:download-translation-model",
+		async (event, quantization?: DubbingModelQuantization) => {
+			try {
+				const modelPath = await downloadTranslationModel(
+					event.sender,
+					quantization ?? "int8",
+				);
+				return { success: true, path: modelPath };
+			} catch (error) {
+				console.error("Failed to download translation model:", error);
+				return { success: false, error: String(error) };
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"dubbing:extract-voice-reference",
+		async (_, options: ExtractVoiceReferenceOptions) => {
+			return await extractVoiceReferenceSample(options);
+		},
+	);
+
+	ipcMain.handle("dubbing:translate", async (_, options: TranslateOptions) => {
+		return await translateTranscript(options);
+	});
+
+	ipcMain.handle("dubbing:synthesize-api", async (_, options: SynthesizeApiOptions) => {
+		return await synthesizeAudioWithApi(options);
+	});
+
+	ipcMain.handle("dubbing:synthesize-local", async (_, options: SynthesizeLocalOptions) => {
+		return await synthesizeAudioWithLocalEngine(options);
+	});
+
+	ipcMain.handle("dubbing:align-captions", async (_, options: AlignCaptionsOptions) => {
+		return await alignDubbedCaptions(options);
+	});
+
+	ipcMain.handle(
+		"dubbing:save-api-key",
+		(_, { provider, key }: { provider: SupportedApiKeyProvider; key: string }) => {
+			const success = saveSecureApiKey(provider, key);
+			return { success };
+		},
+	);
+
+	ipcMain.handle("dubbing:get-api-keys", () => {
+		return {
+			"fish-audio": hasSecureApiKey("fish-audio"),
+			acedatacloud: hasSecureApiKey("acedatacloud"),
+			openai: hasSecureApiKey("openai"),
+			deepl: hasSecureApiKey("deepl"),
+		};
+	});
+}

@@ -2,6 +2,7 @@ import type { ComponentProps, Dispatch, SetStateAction } from "react";
 import type { AspectRatio } from "@/utils/aspectRatioUtils";
 import { useClipAudioReset } from "../audio/useClipAudioReset";
 import type { useAutoCaptionController } from "../captions/useAutoCaptionController";
+import type { useDubbingController } from "../dubbing/useDubbingController";
 import type { useAnnotationRegionCommands } from "../hooks/useAnnotationRegionCommands";
 import type { useAudioRegionCommands } from "../hooks/useAudioRegionCommands";
 import type { useCaptionCommands } from "../hooks/useCaptionCommands";
@@ -37,11 +38,13 @@ type Input = {
 	setNativeCaptureUnavailableModalOpen: Dispatch<SetStateAction<boolean>>;
 	handleUploadWebcam: () => void;
 	handleClearWebcam: () => void;
+	dubbingController?: ReturnType<typeof useDubbingController>;
 };
 
 export function useEditorSettingsPanelProps(input: Input): ComponentProps<typeof SettingsPanel> {
 	const {
 		activeEffectSection,
+		dubbingController,
 		appearance,
 		timeline,
 		zoomCommands,
@@ -218,5 +221,6 @@ export function useEditorSettingsPanelProps(input: Input): ComponentProps<typeof
 		onAnnotationBlurIntensityChange: annotationCommands.handleAnnotationBlurIntensityChange,
 		onAnnotationBlurColorChange: annotationCommands.handleAnnotationBlurColorChange,
 		onAnnotationDelete: annotationCommands.handleAnnotationDelete,
+		dubbingController,
 	};
 }

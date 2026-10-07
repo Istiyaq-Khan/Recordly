@@ -79,6 +79,12 @@ export interface EditorPreferences extends PersistedEditorControls, ExportPrefer
 	autoApplyFreshRecordingAutoZooms: boolean;
 	whisperExecutablePath: string | null;
 	whisperModelPath: string | null;
+	dubbingTargetLanguage: string;
+	dubbingTtsBackend: "cloud" | "local";
+	dubbingCloudProvider: "fish-audio" | "acedatacloud";
+	dubbingTranslationEngine: "local-nllb" | "api";
+	dubbingTranslationQuantization: "int8" | "fp16" | "fp32";
+	dubbingApiTranslationProvider: "openai" | "deepl";
 }
 
 export const EDITOR_PREFERENCES_STORAGE_KEY = "recordly.editor.preferences";
@@ -133,6 +139,12 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
 	autoApplyFreshRecordingAutoZooms: true,
 	whisperExecutablePath: null,
 	whisperModelPath: null,
+	dubbingTargetLanguage: "es",
+	dubbingTtsBackend: "cloud",
+	dubbingCloudProvider: "fish-audio",
+	dubbingTranslationEngine: "local-nllb",
+	dubbingTranslationQuantization: "int8",
+	dubbingApiTranslationProvider: "openai",
 };
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
@@ -408,6 +420,33 @@ export function normalizeEditorPreferences(
 		whisperExecutablePath:
 			normalizeNullablePath(raw.whisperExecutablePath) ?? fallback.whisperExecutablePath,
 		whisperModelPath: normalizeNullablePath(raw.whisperModelPath) ?? fallback.whisperModelPath,
+		dubbingTargetLanguage:
+			typeof raw.dubbingTargetLanguage === "string" && raw.dubbingTargetLanguage.trim()
+				? raw.dubbingTargetLanguage.trim()
+				: fallback.dubbingTargetLanguage ?? "es",
+		dubbingTtsBackend:
+			raw.dubbingTtsBackend === "cloud" || raw.dubbingTtsBackend === "local"
+				? raw.dubbingTtsBackend
+				: fallback.dubbingTtsBackend ?? "cloud",
+		dubbingCloudProvider:
+			raw.dubbingCloudProvider === "fish-audio" || raw.dubbingCloudProvider === "acedatacloud"
+				? raw.dubbingCloudProvider
+				: fallback.dubbingCloudProvider ?? "fish-audio",
+		dubbingTranslationEngine:
+			raw.dubbingTranslationEngine === "local-nllb" || raw.dubbingTranslationEngine === "api"
+				? raw.dubbingTranslationEngine
+				: fallback.dubbingTranslationEngine ?? "local-nllb",
+		dubbingTranslationQuantization:
+			raw.dubbingTranslationQuantization === "int8" ||
+			raw.dubbingTranslationQuantization === "fp16" ||
+			raw.dubbingTranslationQuantization === "fp32"
+				? raw.dubbingTranslationQuantization
+				: fallback.dubbingTranslationQuantization ?? "int8",
+		dubbingApiTranslationProvider:
+			raw.dubbingApiTranslationProvider === "openai" ||
+			raw.dubbingApiTranslationProvider === "deepl"
+				? raw.dubbingApiTranslationProvider
+				: fallback.dubbingApiTranslationProvider ?? "openai",
 	};
 }
 

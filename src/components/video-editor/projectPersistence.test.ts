@@ -292,3 +292,65 @@ it("ignores legacy export preferences when opening and resaving a project", asyn
 	}
 	expect(legacyEditor.exportQuality).toBe("high");
 });
+
+describe("dubbingTrack persistence normalization", () => {
+	it("normalizes dubbingTrack properly and preserves captions and aliases", () => {
+		const rawDubbing = {
+			id: "dub-123",
+			targetLanguage: "es",
+			dubbedAudioPath: "/path/to/dubbed.wav",
+			sourceAudioRef: "/path/to/source.wav",
+			isActive: true,
+			volume: 0.85,
+			syncedCaptions: [
+				{ start: 0.5, end: 2.1, text: "Hola mundo" },
+			],
+		};
+
+		const normalized = normalizeProjectEditor({ dubbingTrack: rawDubbing as never });
+		expect(normalized.dubbingTrack).toMatchObject({
+			id: "dub-123",
+			targetLanguage: "es",
+			language: "es",
+			dubbedAudioPath: "/path/to/dubbed.wav",
+			audioPath: "/path/to/dubbed.wav",
+			isActive: true,
+			volume: 0.85,
+		});
+		expect(normalized.dubbingTrack?.syncedCaptions).toHaveLength(1);
+		expect(normalized.dubbingTrack?.syncedCaptions?.[0]).toEqual({
+			start: 0.5,
+			end: 2.1,
+			text: "Hola mundo",
+		});
+		expect(normalized.dubbingTrack?.syncedCues?.[0]).toEqual({
+			id: "cue-0",
+			startMs: 500,
+			endMs: 2100,
+			text: "Hola mundo",
+		});
+	});
+
+	it("normalizes legacy aliases language and audioPath and rejects invalid track objects", () => {
+		const aliasTrack = {
+			id: "dub-alias",
+			language: "fr",
+			audioPath: "/audio/dubbed_fr.wav",
+			syncedCues: [{ startMs: 1000, endMs: 3000, text: "Bonjour" }],
+		};
+
+		const normalized = normalizeProjectEditor({ dubbingTrack: aliasTrack as never });
+		expect(normalized.dubbingTrack?.targetLanguage).toBe("fr");
+		expect(normalized.dubbingTrack?.dubbedAudioPath).toBe("/audio/dubbed_fr.wav");
+		expect(normalized.dubbingTrack?.syncedCaptions?.[0]).toEqual({
+			start: 1,
+			end: 3,
+			text: "Bonjour",
+		});
+
+		// Invalid track missing id or audio path returns null
+		expect(normalizeProjectEditor({ dubbingTrack: {} as never }).dubbingTrack).toBeNull();
+		expect(normalizeProjectEditor({ dubbingTrack: null as never }).dubbingTrack).toBeNull();
+	});
+});
+

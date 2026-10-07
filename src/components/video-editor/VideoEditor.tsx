@@ -11,6 +11,7 @@ import { useExportSettings } from "./export/useExportSettings";
 import { useTimelineEditingController } from "./hooks/useTimelineEditingController";
 import { EditorShell } from "./layout/EditorShell";
 import { useEditorSettingsPanelProps } from "./layout/useEditorSettingsPanelProps";
+import { useDubbingController } from "./dubbing/useDubbingController";
 import { useVideoEditorPresets } from "./presets/useVideoEditorPresets";
 import { useEditorProjectController } from "./project/useEditorProjectController";
 import { useProjectLibraryController } from "./project/useProjectLibraryController";
@@ -353,6 +354,15 @@ export default function VideoEditor() {
 			return 16 / 9;
 		})(),
 	);
+	const dubbingController = useDubbingController({
+		videoPath: videoPath ?? currentSourcePath,
+		cues: timeline.autoCaptions,
+		dubbingTrack: timeline.dubbingTrack,
+		setDubbingTrack: timeline.setDubbingTrack,
+		whisperExecutablePath,
+		whisperModelPath,
+	});
+
 	const settingsPanelProps = useEditorSettingsPanelProps({
 		activeEffectSection,
 		appearance,
@@ -363,6 +373,7 @@ export default function VideoEditor() {
 		captionCommands,
 		annotationCommands,
 		autoCaptionController,
+		dubbingController,
 		effectiveShowCursor,
 		handleShowCursorChange,
 		currentTime,

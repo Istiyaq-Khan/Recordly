@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import type { SourceAudioTrackSettings } from "@/components/video-editor/audio/audioTypes";
 import { resolveSourceTrackRoutingPolicy } from "@/lib/exporter/sourceTrackRoutingPolicy";
-import type { AudioRegion, ClipRegion } from "../types";
+import type { AudioRegion, ClipRegion, DubbingTrack } from "../types";
 import { findClipAtTimelineTime } from "../types";
 import { isClipMutedById } from "./clipAudio";
 import { useAudioPreviewSync } from "./useAudioPreviewSync";
@@ -28,6 +28,7 @@ interface UseVideoEditorAudioParams {
 	selectedClipId: string | null;
 	clipRegions: ClipRegion[];
 	audioRegions: AudioRegion[];
+	dubbingTrack?: DubbingTrack | null;
 	sourceAudioTrackSettingsByClip: Record<string, SourceAudioTrackSettings>;
 	setSourceAudioTrackSettingsByClip: React.Dispatch<
 		React.SetStateAction<Record<string, SourceAudioTrackSettings>>
@@ -51,6 +52,7 @@ export function useVideoEditorAudio({
 	selectedClipId,
 	clipRegions,
 	audioRegions,
+	dubbingTrack,
 	sourceAudioTrackSettingsByClip,
 	setSourceAudioTrackSettingsByClip,
 	defaultSourceAudioTrackSettings,
@@ -77,8 +79,13 @@ export function useVideoEditorAudio({
 		});
 
 	const sourceTrackRoutingPolicy = useMemo(
-		() => resolveSourceTrackRoutingPolicy(currentSourcePath, sourceAudioFallbackPaths),
-		[currentSourcePath, sourceAudioFallbackPaths],
+		() =>
+			resolveSourceTrackRoutingPolicy(
+				currentSourcePath,
+				sourceAudioFallbackPaths,
+				dubbingTrack,
+			),
+		[currentSourcePath, sourceAudioFallbackPaths, dubbingTrack],
 	);
 	const previewSourceAudioFallbackPaths = sourceTrackRoutingPolicy.playbackPaths;
 	const shouldMutePreviewVideo = sourceTrackRoutingPolicy.muteEmbeddedPreview;

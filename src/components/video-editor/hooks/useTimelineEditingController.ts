@@ -88,6 +88,7 @@ export function useTimelineEditingController(input: Input) {
 		selectedClipId: timeline.selectedClipId,
 		clipRegions: timeline.clipRegions,
 		audioRegions: timeline.audioRegions,
+		dubbingTrack: timeline.dubbingTrack,
 		sourceAudioTrackSettingsByClip: timeline.sourceAudioTrackSettingsByClip,
 		setSourceAudioTrackSettingsByClip: timeline.setSourceAudioTrackSettingsByClip,
 		defaultSourceAudioTrackSettings: timeline.defaultSourceAudioTrackSettings,

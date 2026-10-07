@@ -1,9 +1,9 @@
-import type { AudioRegion } from "@/components/video-editor/types";
+import type { AudioRegion, DubbingTrack } from "@/components/video-editor/types";
 import { SOURCE_AUDIO_NORMALIZE_GAIN } from "@/components/video-editor/audio/audioTypes";
 import { resolveSourceAudioFallbackPaths } from "./sourceAudioFallback";
 
-export type SourceTrackId = "mic" | "system" | "mixed";
-export type ResolvedAudioTrackKind = "user" | "system" | "mic" | "mixed" | "embedded";
+export type SourceTrackId = "mic" | "system" | "mixed" | "dubbing";
+export type ResolvedAudioTrackKind = "user" | "system" | "mic" | "mixed" | "embedded" | "dubbing";
 
 export interface ResolvedAudioTrack {
 	id: string;
@@ -31,6 +31,7 @@ export interface ResolvedAudioPlan {
 
 export function getSourceTrackIdFromPath(audioPath: string): SourceTrackId {
 	const normalized = audioPath.toLowerCase();
+	if (normalized.includes("dubbed")) return "dubbing";
 	if (normalized.includes(".mic.")) return "mic";
 	if (normalized.includes(".system.")) return "system";
 	return "mixed";
@@ -45,6 +46,7 @@ export function buildResolvedAudioPlan(input: {
 	videoResource: string | null | undefined;
 	sourceAudioFallbackPaths: string[] | null | undefined;
 	audioRegions?: AudioRegion[];
+	dubbingTrack?: DubbingTrack | null;
 	sourceTrackGainById?: Partial<Record<SourceTrackId, number>>;
 	embeddedGain?: number;
 	masterGain?: number;
@@ -62,10 +64,22 @@ export function buildResolvedAudioPlan(input: {
 		}
 	}
 
-	const hasDedicatedTracks = Boolean(pathsByTrack.system || pathsByTrack.mic);
+	const isDubbingActive = Boolean(
+		input.dubbingTrack?.isActive && input.dubbingTrack.dubbedAudioPath,
+	);
+	const hasDedicatedTracks = Boolean(
+		pathsByTrack.system || pathsByTrack.mic || isDubbingActive,
+	);
 	const playbackPaths: string[] = [];
 	if (pathsByTrack.system) playbackPaths.push(pathsByTrack.system);
-	if (pathsByTrack.mic) playbackPaths.push(pathsByTrack.mic);
+
+	// If dubbing is active, replace original mic track with dubbed audio track
+	if (isDubbingActive && input.dubbingTrack?.dubbedAudioPath) {
+		playbackPaths.push(input.dubbingTrack.dubbedAudioPath);
+	} else if (pathsByTrack.mic) {
+		playbackPaths.push(pathsByTrack.mic);
+	}
+
 	if (!hasDedicatedTracks && pathsByTrack.mixed) playbackPaths.push(pathsByTrack.mixed);
 
 	const includeEmbeddedInExport = !pathsByTrack.system && !pathsByTrack.mixed;
@@ -87,15 +101,21 @@ export function buildResolvedAudioPlan(input: {
 	}));
 
 	for (const audioPath of playbackPaths) {
-		const trackId = getSourceTrackIdFromPath(audioPath);
+		const isDubbedTrack =
+			isDubbingActive && audioPath === input.dubbingTrack?.dubbedAudioPath;
+		const trackId = isDubbedTrack ? "dubbing" : getSourceTrackIdFromPath(audioPath);
+		const gain = isDubbedTrack
+			? clampGain(input.dubbingTrack?.volume ?? 1, 2)
+			: clampGain(input.sourceTrackGainById?.[trackId as SourceTrackId] ?? 1, 2);
+
 		tracks.push({
 			id: `${trackId}:${audioPath}`,
-			kind: trackId,
+			kind: trackId as ResolvedAudioTrackKind,
 			sourceRef: {
 				path: audioPath,
 				startDelayMs: 0,
 			},
-			gain: clampGain(input.sourceTrackGainById?.[trackId] ?? 1, 2),
+			gain,
 			timelineBinding: {
 				startMs: 0,
 				endMs: Number.POSITIVE_INFINITY,

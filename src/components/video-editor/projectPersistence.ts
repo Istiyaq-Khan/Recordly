@@ -16,6 +16,7 @@ import {
 	type CropRegion,
 	type CursorClickEffectStyle,
 	type CursorStyle,
+	type DubbingTrack,
 	DEFAULT_ANNOTATION_POSITION,
 	DEFAULT_ANNOTATION_SIZE,
 	DEFAULT_ANNOTATION_STYLE,
@@ -133,6 +134,7 @@ export interface ProjectEditorState {
 	autoCaptionSettings: AutoCaptionSettings;
 	webcam: WebcamOverlaySettings;
 	aspectRatio: AspectRatio;
+	dubbingTrack?: DubbingTrack | null;
 	sourceAudioTrackSettingsByClip?: Record<string, SourceAudioTrackSettings>;
 	defaultSourceAudioTrackSettings?: SourceAudioTrackSettings;
 }
@@ -1048,6 +1050,80 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 				isCustomAspectRatio(editor.aspectRatio))
 				? (editor.aspectRatio as AspectRatio)
 				: "16:9",
+		dubbingTrack: (() => {
+			const raw = (editor as Record<string, any>).dubbingTrack;
+			if (!raw || typeof raw !== "object" || typeof raw.id !== "string") {
+				return null;
+			}
+			const targetLanguage =
+				typeof raw.targetLanguage === "string"
+					? raw.targetLanguage
+					: typeof raw.language === "string"
+						? raw.language
+						: null;
+			const dubbedAudioPath =
+				typeof raw.dubbedAudioPath === "string"
+					? raw.dubbedAudioPath
+					: typeof raw.audioPath === "string"
+						? raw.audioPath
+						: null;
+			if (!targetLanguage || !dubbedAudioPath) {
+				return null;
+			}
+			const rawList = Array.isArray(raw.syncedCaptions)
+				? raw.syncedCaptions
+				: Array.isArray(raw.syncedCues)
+					? raw.syncedCues
+					: [];
+			const syncedCaptions = rawList
+				.filter(
+					(c: any) =>
+						c &&
+						isFiniteNumber(
+							c.start ?? (c.startMs !== undefined ? c.startMs / 1000 : undefined),
+						) &&
+						isFiniteNumber(c.end ?? (c.endMs !== undefined ? c.endMs / 1000 : undefined)) &&
+						typeof c.text === "string",
+				)
+				.map((c: any) => {
+					const start = c.start !== undefined ? c.start : c.startMs / 1000;
+					const end = c.end !== undefined ? c.end : c.endMs / 1000;
+					return {
+						start: Math.max(0, start),
+						end: Math.max(start, end),
+						text: c.text.trim(),
+					};
+				});
+			const syncedCues = syncedCaptions.map(
+				(c: { start: number; end: number; text: string }, index: number) => ({
+					id: `cue-${index}`,
+					startMs: Math.round(c.start * 1000),
+					endMs: Math.round(c.end * 1000),
+					text: c.text,
+				}),
+			);
+
+			return {
+				id: raw.id,
+				targetLanguage,
+				language: targetLanguage,
+				sourceAudioRef: typeof raw.sourceAudioRef === "string" ? raw.sourceAudioRef : "",
+				dubbedAudioPath,
+				audioPath: dubbedAudioPath,
+				referenceVoiceSamplePath:
+					typeof raw.referenceVoiceSamplePath === "string"
+						? raw.referenceVoiceSamplePath
+						: undefined,
+				referenceTranscript:
+					typeof raw.referenceTranscript === "string"
+						? raw.referenceTranscript
+						: undefined,
+				isActive: typeof raw.isActive === "boolean" ? raw.isActive : false,
+				volume: isFiniteNumber(raw.volume) ? clamp(raw.volume, 0, 1) : 1,
+				syncedCaptions,
+				syncedCues,
+			};
+		})(),
 	};
 }
 

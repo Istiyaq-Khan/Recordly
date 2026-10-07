@@ -42,6 +42,8 @@ import { loadEditorPreferences, saveEditorPreferences } from "./editorPreference
 import { getDefaultBorderRadiusPercent } from "./projectPersistence";
 import { SliderControl } from "./SliderControl";
 import { WallpaperGrid } from "./WallpaperGrid";
+import { DubbingPanel } from "./dubbing/DubbingPanel";
+import type { useDubbingController } from "./dubbing/useDubbingController";
 import { useShortcuts } from "@/contexts/ShortcutsContext";
 import { SettingsRow } from "./SettingsRow";
 import type {
@@ -557,6 +559,7 @@ interface SettingsPanelProps {
 	onCaptionDelete?: (id: string) => void;
 	nativeCaptureUnavailableSession?: boolean;
 	onOpenNativeCaptureUnavailableModal?: () => void;
+	dubbingController?: ReturnType<typeof useDubbingController>;
 }
 
 const ZOOM_DEPTH_OPTIONS: Array<{ depth: ZoomDepth; label: string }> = [
@@ -1000,6 +1003,7 @@ export function SettingsPanel({
 	onCaptionDelete,
 	nativeCaptureUnavailableSession = false,
 	onOpenNativeCaptureUnavailableModal,
+	dubbingController,
 }: SettingsPanelProps) {
 	const tSettings = useScopedT("settings");
 	const { locale, setLocale, t } = useI18n();
@@ -2786,6 +2790,10 @@ export function SettingsPanel({
 				return captionsSectionContent;
 			case "caption":
 				return captionSectionContent;
+			case "dubbing":
+				return dubbingController ? (
+					<DubbingPanel controller={dubbingController} advanced={advanced} t={tSettings} />
+				) : null;
 			case "cursor":
 				return (
 					<section className="flex flex-col gap-4">

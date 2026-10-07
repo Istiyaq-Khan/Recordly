@@ -38,4 +38,46 @@ describe("resolveSourceTrackRoutingPolicy", () => {
 		expect(policy.muteEmbeddedPreview).toBe(false);
 		expect(policy.includeEmbeddedInExport).toBe(true);
 	});
+
+	it("replaces mic sidecar with dubbed audio when dubbingTrack is active", () => {
+		const policy = resolveSourceTrackRoutingPolicy(
+			"/tmp/recording.mp4",
+			[
+				"/tmp/recording.system.wav",
+				"/tmp/recording.mic.wav",
+			],
+			{
+				id: "dub-1",
+				targetLanguage: "es",
+				dubbedAudioPath: "/tmp/dubbed.wav",
+				isActive: true,
+				syncedCaptions: [],
+			},
+		);
+
+		expect(policy.playbackPaths).toContain("/tmp/recording.system.wav");
+		expect(policy.playbackPaths).toContain("/tmp/dubbed.wav");
+		expect(policy.playbackPaths).not.toContain("/tmp/recording.mic.wav");
+	});
+
+	it("keeps original mic sidecar when dubbingTrack is inactive", () => {
+		const policy = resolveSourceTrackRoutingPolicy(
+			"/tmp/recording.mp4",
+			[
+				"/tmp/recording.system.wav",
+				"/tmp/recording.mic.wav",
+			],
+			{
+				id: "dub-1",
+				targetLanguage: "es",
+				dubbedAudioPath: "/tmp/dubbed.wav",
+				isActive: false,
+				syncedCaptions: [],
+			},
+		);
+
+		expect(policy.playbackPaths).toContain("/tmp/recording.system.wav");
+		expect(policy.playbackPaths).toContain("/tmp/recording.mic.wav");
+		expect(policy.playbackPaths).not.toContain("/tmp/dubbed.wav");
+	});
 });

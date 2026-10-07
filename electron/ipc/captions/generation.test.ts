@@ -66,7 +66,12 @@ beforeEach(() => {
 	mocks.rm.mockResolvedValue(undefined);
 });
 
-const whisperCalls = () => mocks.exec.mock.calls.filter(([file]) => file === "/whisper");
+const whisperCalls = () =>
+	mocks.exec.mock.calls.filter(
+		([file]) =>
+			typeof file === "string" &&
+			(file === "/whisper" || file.endsWith("whisper") || file.endsWith("whisper.exe")),
+	);
 
 describe("caption generation pipeline", () => {
 	it("transcribes both sidecars independently, preserving the microphone delay", async () => {
@@ -120,7 +125,7 @@ describe("caption generation pipeline", () => {
 
 	it("retries SRT only for a runtime that rejects full JSON", async () => {
 		mocks.exec.mockImplementation(async (file: string, args: string[]) => {
-			if (file === "/whisper" && args.includes("-ojf"))
+			if (file.includes("whisper") && args.includes("-ojf"))
 				throw new Error("unknown argument: -ojf");
 			return { stderr: "" };
 		});

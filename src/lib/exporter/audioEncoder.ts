@@ -3,6 +3,7 @@ import { requiresClipTimelineRendering } from "./clipTimeline";
 import type {
 	AudioRegion,
 	ClipRegion,
+	DubbingTrack,
 	SourceAudioTrackSettings,
 	SpeedRegion,
 } from "@/components/video-editor/types";
@@ -113,6 +114,7 @@ export class AudioProcessor extends AudioTranscodeProcessor {
 		sourceAudioFallbackStartDelayMsByPath?: Record<string, number>,
 		sourceAudioTrackSettings?: SourceAudioTrackSettings,
 		clipRegions?: ClipRegion[],
+		dubbingTrack?: DubbingTrack | null,
 	): Promise<void> {
 		const sortedTrims = trimRegions
 			? [...trimRegions].sort((a, b) => a.startMs - b.startMs)
@@ -133,6 +135,7 @@ export class AudioProcessor extends AudioTranscodeProcessor {
 		const routingPolicy = resolveSourceTrackRoutingPolicy(
 			videoUrl,
 			sortedSourceAudioFallbackPaths,
+			dubbingTrack,
 		);
 		const requiresLegacyMacMicSidecarMix =
 			routingPolicy.includeEmbeddedInExport &&
@@ -148,26 +151,42 @@ export class AudioProcessor extends AudioTranscodeProcessor {
 			requiresLegacyMacMicSidecarMix ||
 			hasTimedCompanionAudio;
 
-		// When speed edits, audio regions, or multiple audio sources need mixing, use offline AudioContext pipeline.
+		// When speed edits, audio regions, dubbing track, or multiple audio sources need mixing, use offline AudioContext pipeline.
 		if (
 			requiresClipTimelineRendering(clipRegions) ||
 			sortedSpeedRegions.length > 0 ||
 			sortedAudioRegions.length > 0 ||
 			needsSourceAudioMixing ||
 			hasNonDefaultSourceTrackSettings(sourceAudioTrackSettings) ||
-			(clipRegions ?? []).some((clip) => Boolean(clip.muted))
+			(clipRegions ?? []).some((clip) => Boolean(clip.muted)) ||
+			Boolean(dubbingTrack?.isActive)
 		) {
-			await this.renderAndMuxOfflineAudio(
-				videoUrl,
-				sortedTrims,
-				sortedSpeedRegions,
-				sortedAudioRegions,
-				sortedSourceAudioFallbackPaths,
-				sourceAudioFallbackStartDelayMsByPath,
-				sourceAudioTrackSettings,
-				clipRegions,
-				muxer,
-			);
+			if (dubbingTrack !== undefined) {
+				await this.renderAndMuxOfflineAudio(
+					videoUrl,
+					sortedTrims,
+					sortedSpeedRegions,
+					sortedAudioRegions,
+					sortedSourceAudioFallbackPaths,
+					sourceAudioFallbackStartDelayMsByPath,
+					sourceAudioTrackSettings,
+					clipRegions,
+					muxer,
+					dubbingTrack,
+				);
+			} else {
+				await this.renderAndMuxOfflineAudio(
+					videoUrl,
+					sortedTrims,
+					sortedSpeedRegions,
+					sortedAudioRegions,
+					sortedSourceAudioFallbackPaths,
+					sourceAudioFallbackStartDelayMsByPath,
+					sourceAudioTrackSettings,
+					clipRegions,
+					muxer,
+				);
+			}
 			return;
 		}
 
@@ -247,6 +266,7 @@ export class AudioProcessor extends AudioTranscodeProcessor {
 		sourceAudioFallbackStartDelayMsByPath?: Record<string, number>,
 		sourceAudioTrackSettings?: SourceAudioTrackSettings,
 		clipRegions?: ClipRegion[],
+		dubbingTrack?: DubbingTrack | null,
 	): Promise<Blob> {
 		const sortedTrims = trimRegions
 			? [...trimRegions].sort((a, b) => a.startMs - b.startMs)
@@ -265,16 +285,29 @@ export class AudioProcessor extends AudioTranscodeProcessor {
 				)
 			: [];
 
-		const prepared = await this.prepareOfflineRender(
-			videoUrl,
-			sortedTrims,
-			sortedSpeedRegions,
-			sortedAudioRegions,
-			sortedSourceAudioFallbackPaths,
-			sourceAudioFallbackStartDelayMsByPath,
-			sourceAudioTrackSettings,
-			clipRegions,
-		);
+		const prepared =
+			dubbingTrack !== undefined
+				? await this.prepareOfflineRender(
+						videoUrl,
+						sortedTrims,
+						sortedSpeedRegions,
+						sortedAudioRegions,
+						sortedSourceAudioFallbackPaths,
+						sourceAudioFallbackStartDelayMsByPath,
+						sourceAudioTrackSettings,
+						clipRegions,
+						dubbingTrack,
+				  )
+				: await this.prepareOfflineRender(
+						videoUrl,
+						sortedTrims,
+						sortedSpeedRegions,
+						sortedAudioRegions,
+						sortedSourceAudioFallbackPaths,
+						sourceAudioFallbackStartDelayMsByPath,
+						sourceAudioTrackSettings,
+						clipRegions,
+				  );
 		return this.renderToWavBlobChunked(prepared);
 	}
 

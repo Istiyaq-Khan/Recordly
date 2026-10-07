@@ -45,7 +45,11 @@ describe("local media path policy", () => {
 		vi.doUnmock("../../mediaServer");
 		vi.doUnmock("./firstFrameThumbnail");
 		if (tempRoot) {
-			await fs.rm(tempRoot, { recursive: true, force: true });
+			try {
+				await fs.rm(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+			} catch {
+				// Ignore cleanup race conditions on Windows temp files
+			}
 		}
 	});
 
