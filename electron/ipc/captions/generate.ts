@@ -13,10 +13,11 @@ import {
 } from "../recording/diagnostics";
 import { normalizeVideoSourcePath } from "../utils";
 import { type CaptionAudioCandidate, getCaptionCompanionAudioCandidates } from "./audioCandidates";
-import { shouldRetryWhisperWithoutJson } from "./parser";
-import { readWhisperCaptionOutput } from "./output";
-import { isMissingWindowsWhisperRuntimeDependency } from "./runtimeErrors";
 import { mergeCaptionSources } from "./mergeSources";
+import { readWhisperCaptionOutput } from "./output";
+import { shouldRetryWhisperWithoutJson } from "./parser";
+import { ensureWhisperNativeRuntimeReady } from "./runtimeEnvironment";
+import { isMissingWindowsWhisperRuntimeDependency } from "./runtimeErrors";
 import { segmentCuesIntoPhrases } from "./segment";
 import {
 	parseSilenceIntervals,
@@ -37,8 +38,33 @@ async function executeWhisper(whisperExecutablePath: string, args: string[]) {
 		});
 	} catch (error) {
 		if (isMissingWindowsWhisperRuntimeDependency(error)) {
+			console.warn(
+				"[auto-captions] Whisper execution failed due to missing runtime dependency. Attempting automated recovery and provisioning...",
+				error,
+			);
+			try {
+				const provisionedPath = await ensureWhisperNativeRuntimeReady(null, {
+					preferredPath: whisperExecutablePath,
+				});
+				if (provisionedPath) {
+					console.log(
+						"[auto-captions] Whisper runtime successfully provisioned. Retrying execution with:",
+						provisionedPath,
+					);
+					await execFileAsync(provisionedPath, args, {
+						timeout: 30 * 60 * 1000,
+						maxBuffer: 20 * 1024 * 1024,
+					});
+					return;
+				}
+			} catch (provisionError) {
+				console.error(
+					"[auto-captions] Automated Whisper runtime provisioning failed:",
+					provisionError,
+				);
+			}
 			throw new Error(
-				"Whisper could not start because the Microsoft Visual C++ x64 Redistributable is missing. Install it from https://aka.ms/vc14/vc_redist.x64.exe, then restart Recordly.",
+				"Whisper could not start because its required native runtime dependencies could not be provisioned automatically.",
 			);
 		}
 		throw error;

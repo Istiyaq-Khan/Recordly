@@ -7,6 +7,7 @@ import {
 	getWhisperSmallModelStatus,
 	sendWhisperModelDownloadProgress,
 } from "../captions/whisper";
+import { ensureWhisperNativeRuntimeReady } from "../captions/runtimeEnvironment";
 import { LEGACY_PROJECT_FILE_EXTENSIONS, PROJECT_FILE_EXTENSION } from "../constants";
 import { hasProjectFileExtension, loadProjectFromPath } from "../project/manager";
 import { setCurrentProjectPath } from "../state";
@@ -171,6 +172,8 @@ export function registerCaptionHandlers() {
 
 	ipcMain.handle("download-whisper-small-model", async (event) => {
 		try {
+			await ensureWhisperNativeRuntimeReady(event.sender);
+
 			const existing = await getWhisperSmallModelStatus();
 			if (existing.exists) {
 				sendWhisperModelDownloadProgress(event.sender, {

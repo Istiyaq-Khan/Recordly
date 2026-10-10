@@ -1,5 +1,4 @@
-import { createWriteStream } from "node:fs";
-import { constants as fsConstants } from "node:fs";
+import { createWriteStream, constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import { get as httpsGet } from "node:https";
 import type Electron from "electron";
@@ -8,6 +7,7 @@ import {
 	WHISPER_MODEL_DOWNLOAD_URL,
 	WHISPER_SMALL_MODEL_PATH,
 } from "../constants";
+import { ensureWhisperNativeRuntimeReady } from "./runtimeEnvironment";
 
 export function sendWhisperModelDownloadProgress(
 	webContents: Electron.WebContents,
@@ -123,6 +123,7 @@ export async function downloadWhisperSmallModel(
 	});
 
 	try {
+		await ensureWhisperNativeRuntimeReady(webContents);
 		await fs.rm(tempPath, { force: true });
 		await downloadFileWithProgress(WHISPER_MODEL_DOWNLOAD_URL, tempPath, (progress) => {
 			sendWhisperModelDownloadProgress(webContents, {

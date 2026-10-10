@@ -80,14 +80,25 @@ export function resolvePreferredWindowsNativeHelperPath(
 	return buildOutputPath;
 }
 
+export function getWhisperUserDataRuntimeDir(archTag = getNativeArchTag()): string {
+	return path.join(app.getPath("userData"), "whisper-runtime", archTag);
+}
+
 export function getBundledWhisperExecutableCandidates(): string[] {
 	const binaryNames =
 		process.platform === "win32"
 			? ["whisper-cli.exe", "whisper-cpp.exe", "whisper.exe", "main.exe"]
 			: ["whisper-cli", "whisper-cpp", "whisper", "main"];
 
-	return binaryNames.map((binaryName) => getPrebundledNativeHelperPath(binaryName));
+	const userDataDir = getWhisperUserDataRuntimeDir();
+	const candidates = [
+		...binaryNames.map((binaryName) => path.join(userDataDir, binaryName)),
+		...binaryNames.map((binaryName) => getPrebundledNativeHelperPath(binaryName)),
+	];
+
+	return candidates;
 }
+
 
 export function getNativeCaptureHelperBinaryPath(): string {
 	return path.join(app.getPath("userData"), "native-tools", "recordly-screencapturekit-helper");

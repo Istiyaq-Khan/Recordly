@@ -174,6 +174,14 @@ function getExpectedNativeHelperFiles(archTag) {
 			{ name: "helpers-manifest.json", label: "Windows helper manifest" },
 			{ name: "whisper-cli.exe", label: "Whisper CLI runtime", executable: true },
 			{ name: "whisper-runtime.json", label: "Whisper runtime manifest" },
+			{ name: "whisper.dll", label: "Whisper core library" },
+			{ name: "ggml.dll", label: "GGML core library" },
+			{ name: "ggml-base.dll", label: "GGML base library" },
+			{ name: "ggml-cpu.dll", label: "GGML CPU backend library" },
+			{ name: "msvcp140.dll", label: "MSVC C++ runtime library" },
+			{ name: "vcruntime140.dll", label: "MSVC C runtime library" },
+			{ name: "vcruntime140_1.dll", label: "MSVC C runtime extension" },
+			{ name: "vcomp140.dll", label: "MSVC OpenMP runtime library" },
 		];
 		if (archTag === "win32-x64") {
 			helpers.push({
@@ -262,6 +270,43 @@ function verifyNativeHelpers(unpackedRoot) {
 	}
 }
 
+function verifyWhisper(unpackedRoot) {
+	const binaryName = process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli";
+	const whisperPath = path.join(
+		unpackedRoot,
+		"electron",
+		"native",
+		"bin",
+		getNativeArchTag(),
+		binaryName,
+	);
+	if (!existsSync(whisperPath)) {
+		fail(`packaged Whisper binary is missing at ${relativePath(whisperPath)}`);
+	}
+	assertFile(whisperPath, "packaged Whisper binary", { executable: true });
+
+	try {
+		execFileSync(whisperPath, ["-h"], {
+			encoding: "utf8",
+			timeout: 15000,
+			windowsHide: true,
+			stdio: "pipe",
+		});
+	} catch (error) {
+		const err = error;
+		if (
+			err.status !== 0 &&
+			!err.stderr?.includes("usage:") &&
+			!err.stdout?.includes("usage:")
+		) {
+			fail(
+				`Whisper binary smoke test failed at ${relativePath(whisperPath)}: ${err.message}`,
+			);
+		}
+	}
+	console.log(`[packaged-smoke] Whisper runtime verified: ${relativePath(whisperPath)}`);
+}
+
 const unpackedRoots = findDirectoriesByName(releaseRoot, "app.asar.unpacked");
 
 if (unpackedRoots.length === 0) {
@@ -277,6 +322,7 @@ for (const unpackedRoot of unpackedRoots) {
 	assertPackagedAppExecutable(unpackedRoot);
 	verifyFfmpeg(unpackedRoot);
 	verifyNativeHelpers(unpackedRoot);
+	verifyWhisper(unpackedRoot);
 }
 
 console.log("[packaged-smoke] packaged binary path smoke passed");

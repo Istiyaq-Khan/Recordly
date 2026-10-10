@@ -336,11 +336,42 @@ async function shouldSkipBuild(target) {
 		const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 		const binaryName = target.platform === "win32" ? "whisper-cli.exe" : "whisper-cli";
 		const binaryPath = path.join(target.outputDir, binaryName);
-		return (
-			manifest.version === whisperVersion &&
-			manifest.arch === target.arch &&
-			existsSync(binaryPath)
-		);
+		if (
+			manifest.version !== whisperVersion ||
+			manifest.arch !== target.arch ||
+			!existsSync(binaryPath)
+		) {
+			return false;
+		}
+
+		if (target.platform === "win32") {
+			const requiredDlls = [
+				"whisper.dll",
+				"ggml.dll",
+				"ggml-base.dll",
+				"ggml-cpu.dll",
+				"msvcp140.dll",
+				"vcruntime140.dll",
+				"vcruntime140_1.dll",
+				"vcomp140.dll",
+			];
+			for (const dll of requiredDlls) {
+				if (!existsSync(path.join(target.outputDir, dll))) {
+					return false;
+				}
+			}
+
+			try {
+				execFileSync(binaryPath, ["-h"], { stdio: "ignore", windowsHide: true });
+			} catch (err) {
+				const error = err;
+				if (error.status !== 0 && !error.stderr?.toString().includes("usage:")) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	} catch {
 		return false;
 	}
@@ -399,6 +430,72 @@ async function findRuntimeArtifacts(target) {
 	throw new Error("[build-whisper-runtime] Built whisper runtime artifacts were not found.");
 }
 
+async function stageMsvcRuntimeDependencies(target) {
+	if (target.platform !== "win32") {
+		return;
+	}
+
+	const msvcDlls = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll"];
+
+	const searchLocations = [path.join(process.env.SystemRoot || "C:\\Windows", "System32")];
+
+	const vsVersions = ["2022", "2019", "2017"];
+	const vsEditions = ["Community", "Professional", "Enterprise", "BuildTools"];
+	for (const version of vsVersions) {
+		for (const edition of vsEditions) {
+			const candidateBase = path.join(
+				"C:",
+				"Program Files",
+				"Microsoft Visual Studio",
+				version,
+				edition,
+				"VC",
+				"Redist",
+				"MSVC",
+			);
+			if (existsSync(candidateBase)) {
+				try {
+					const subdirs = await readdir(candidateBase);
+					for (const subdir of subdirs) {
+						const crtDir = path.join(
+							candidateBase,
+							subdir,
+							"x64",
+							"Microsoft.VC143.CRT",
+						);
+						if (existsSync(crtDir)) searchLocations.push(crtDir);
+						const crtDir142 = path.join(
+							candidateBase,
+							subdir,
+							"x64",
+							"Microsoft.VC142.CRT",
+						);
+						if (existsSync(crtDir142)) searchLocations.push(crtDir142);
+					}
+				} catch {
+					// ignore
+				}
+			}
+		}
+	}
+
+	for (const dll of msvcDlls) {
+		const destPath = path.join(target.outputDir, dll);
+		if (existsSync(destPath)) {
+			continue;
+		}
+
+		for (const loc of searchLocations) {
+			const candidateFile = path.join(loc, dll);
+			if (existsSync(candidateFile)) {
+				await cp(candidateFile, destPath, { force: true });
+				console.log(`[build-whisper-runtime] Staged ${dll} from ${candidateFile}`);
+				break;
+			}
+		}
+	}
+}
+
 async function stageRuntimeArtifacts(target, candidateDir, runtimeEntries) {
 	await mkdir(target.outputDir, { recursive: true });
 
@@ -417,6 +514,10 @@ async function stageRuntimeArtifacts(target, candidateDir, runtimeEntries) {
 		if (target.platform !== "win32") {
 			await chmod(destinationPath, 0o755).catch(() => undefined);
 		}
+	}
+
+	if (target.platform === "win32") {
+		await stageMsvcRuntimeDependencies(target);
 	}
 
 	const manifestPath = path.join(target.outputDir, "whisper-runtime.json");
