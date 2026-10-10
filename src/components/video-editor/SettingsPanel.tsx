@@ -2047,6 +2047,31 @@ export function SettingsPanel({
 				</div>
 				<div className="flex items-center justify-between gap-3">
 					<div className="text-sm font-medium text-foreground">
+						{tSettings("captions.audioSource", "Audio Source")}
+					</div>
+					<Select
+						value={autoCaptionSettings.audioSourceOption || "mic-only"}
+						onValueChange={(value) =>
+							updateAutoCaptionSettings({
+								audioSourceOption: value as "mic-only" | "mic-plus-system",
+							})
+						}
+					>
+						<SelectTrigger className="h-9 w-[180px] text-sm">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="mic-only">
+								{tSettings("captions.micOnly", "Microphone Only")}
+							</SelectItem>
+							<SelectItem value="mic-plus-system">
+								{tSettings("captions.micPlusSystem", "Mic + System Audio")}
+							</SelectItem>
+						</SelectContent>
+					</Select>
+				</div>
+				<div className="flex items-center justify-between gap-3">
+					<div className="text-sm font-medium text-foreground">
 						{tSettings("captions.animation", "Animation")}
 					</div>
 					<Select

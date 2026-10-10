@@ -15,7 +15,14 @@ vi.mock("./storage", () => ({
 	saveSecureApiKey: vi.fn(),
 }));
 
-import { checkLocalDubbingEngineStatus, synthesizeAudioWithApi } from "./fishAudio";
+import {
+	checkLocalDubbingEngineStatus,
+	FISH_TTS_MODEL_CONFIGS,
+	getTtsModelPath,
+	getTtsModelStatus,
+	synthesizeAudioWithApi,
+	synthesizeAudioWithLocalEngine,
+} from "./fishAudio";
 import { getSecureApiKey } from "./storage";
 
 describe("Fish Audio S2-Pro Engine", () => {
@@ -29,6 +36,23 @@ describe("Fish Audio S2-Pro Engine", () => {
 		globalThis.fetch = originalFetch;
 	});
 
+	it("defines valid Hugging Face configs for all quantization levels", () => {
+		expect(FISH_TTS_MODEL_CONFIGS.q4_k_m.url).toContain("huggingface.co");
+		expect(FISH_TTS_MODEL_CONFIGS.q8_0.url).toContain("huggingface.co");
+		expect(FISH_TTS_MODEL_CONFIGS.fp16.url).toContain("huggingface.co");
+
+		expect(getTtsModelPath("q4_k_m")).toContain("q4_k_m.gguf");
+		expect(getTtsModelPath("q8_0")).toContain("q8_0.gguf");
+		expect(getTtsModelPath("fp16")).toContain("fp16.gguf");
+	});
+
+	it("returns model status indicating existence state", async () => {
+		const status = await getTtsModelStatus("q4_k_m");
+		expect(status.success).toBe(true);
+		expect(status.quantization).toBe("q4_k_m");
+		expect(typeof status.exists).toBe("boolean");
+	});
+
 	it("checks local engine installation status", async () => {
 		const status = await checkLocalDubbingEngineStatus();
 		expect(status.success).toBe(true);
@@ -39,6 +63,16 @@ describe("Fish Audio S2-Pro Engine", () => {
 	it("returns error if synthesizeAudioWithApi is called with empty text", async () => {
 		const result = await synthesizeAudioWithApi({
 			text: "   ",
+		});
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("No text provided");
+	});
+
+	it("returns error if synthesizeAudioWithLocalEngine is called with empty text", async () => {
+		const result = await synthesizeAudioWithLocalEngine({
+			text: "   ",
+			referenceAudioPath: "/fake/ref.wav",
+			referenceTranscript: "Hello",
 		});
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("No text provided");

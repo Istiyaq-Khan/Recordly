@@ -230,6 +230,7 @@ export function registerCaptionHandlers() {
 				whisperExecutablePath: string;
 				whisperModelPath: string;
 				language?: string;
+				audioSourceOption?: "mic-only" | "mic-plus-system";
 			},
 		) => {
 			try {

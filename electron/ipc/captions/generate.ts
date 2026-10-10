@@ -336,6 +336,7 @@ export async function generateAutoCaptionsFromVideo(options: {
 	whisperExecutablePath?: string;
 	whisperModelPath: string;
 	language?: string;
+	audioSourceOption?: "mic-only" | "mic-plus-system";
 }) {
 	const candidates = await resolveCaptionAudioCandidates(options.videoPath);
 	const microphone = candidates.filter((source) => source.label === "microphone audio sidecar");
@@ -343,6 +344,15 @@ export async function generateAutoCaptionsFromVideo(options: {
 	const secondary = candidates.filter(
 		(source) => !microphone.includes(source) && !system.includes(source),
 	);
+
+	if (options.audioSourceOption === "mic-only" && microphone.length > 0) {
+		const result = await generateCaptionsForSource({ ...options, candidates: microphone });
+		return {
+			cues: result.cues,
+			audioSourceLabel: "microphone audio only",
+		};
+	}
+
 	if (microphone.length === 0) {
 		return generateCaptionsForSource({ ...options, candidates: [...system, ...secondary] });
 	}

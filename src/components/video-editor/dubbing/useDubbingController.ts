@@ -11,6 +11,7 @@ import type {
 	DubbingTranslationEngine,
 	DubbingTtsBackend,
 } from "../types";
+import type { TtsQuantization } from "./constants";
 
 interface UseDubbingControllerParams {
 	videoPath: string | null;
@@ -81,6 +82,26 @@ export function useDubbingController({
 		deepl: "",
 	});
 
+	// Custom OpenAI & OpenAI-compatible endpoint configuration
+	const [customOpenAiConfig, setCustomOpenAiConfig] = useState<{
+		baseUrl: string;
+		model: string;
+		hasApiKey?: boolean;
+	}>({
+		baseUrl: "",
+		model: "gpt-4o-mini",
+		hasApiKey: false,
+	});
+	const [customOpenAiInputs, setCustomOpenAiInputs] = useState<{
+		apiKey: string;
+		baseUrl: string;
+		model: string;
+	}>({
+		apiKey: "",
+		baseUrl: "",
+		model: "gpt-4o-mini",
+	});
+
 	// Per-quantization download status
 	const [modelStatusByQuantization, setModelStatusByQuantization] = useState<
 		Record<DubbingModelQuantization, QuantizationStatus>
@@ -88,6 +109,27 @@ export function useDubbingController({
 		int8: { exists: false, isDownloading: false, progress: 0 },
 		fp16: { exists: false, isDownloading: false, progress: 0 },
 		fp32: { exists: false, isDownloading: false, progress: 0 },
+	});
+
+	// Fish Audio S2-Pro Local Engine Quantization & Status
+	const [ttsQuantization, setTtsQuantization] = useState<TtsQuantization>("q4_k_m");
+	const [ttsModelStatusByQuantization, setTtsModelStatusByQuantization] = useState<
+		Record<
+			TtsQuantization,
+			{
+				exists: boolean;
+				path?: string | null;
+				isDownloading: boolean;
+				progress: number;
+				speed?: number;
+				eta?: number;
+				error?: string;
+			}
+		>
+	>({
+		q4_k_m: { exists: false, isDownloading: false, progress: 0 },
+		q8_0: { exists: false, isDownloading: false, progress: 0 },
+		fp16: { exists: false, isDownloading: false, progress: 0 },
 	});
 
 	// Voice Reference Sample
@@ -112,6 +154,10 @@ export function useDubbingController({
 		saveEditorPreferences({ dubbingTtsBackend: backend });
 	}, []);
 
+	const updateTtsQuantization = useCallback((quant: TtsQuantization) => {
+		setTtsQuantization(quant);
+	}, []);
+
 	const updateCloudProvider = useCallback((provider: DubbingCloudProvider) => {
 		setCloudProvider(provider);
 		saveEditorPreferences({ dubbingCloudProvider: provider });
@@ -132,16 +178,75 @@ export function useDubbingController({
 		saveEditorPreferences({ dubbingApiTranslationProvider: provider });
 	}, []);
 
-	// Refresh saved API key flags
+	// Refresh saved API key flags and custom OpenAI settings
 	const refreshApiKeys = useCallback(async () => {
-		if (!window.electronAPI?.getDubbingApiKeys) return;
+		if (!window.electronAPI?.getDubbingStatus) {
+			if (window.electronAPI?.getDubbingApiKeys) {
+				try {
+					const keys = await window.electronAPI.getDubbingApiKeys();
+					if (keys) setSavedApiKeys(keys);
+				} catch (err) {
+					console.error("[useDubbingController] Failed to check API keys:", err);
+				}
+			}
+			return;
+		}
 		try {
-			const keys = await window.electronAPI.getDubbingApiKeys();
-			if (keys) setSavedApiKeys(keys);
+			const status = await window.electronAPI.getDubbingStatus();
+			if (status) {
+				setSavedApiKeys({
+					"fish-audio": status.hasFishApiKey,
+					acedatacloud: status.hasAceDataApiKey,
+					openai: status.hasOpenAiApiKey,
+					deepl: status.hasDeepLApiKey,
+				});
+			}
+			if (status?.customOpenAiConfig) {
+				const cfg = {
+					baseUrl: status.customOpenAiConfig.baseUrl ?? "",
+					model: status.customOpenAiConfig.model ?? "gpt-4o-mini",
+					hasApiKey: Boolean(
+						status.customOpenAiConfig.baseUrl !== undefined ||
+						status?.hasOpenAiApiKey
+					),
+				};
+				setCustomOpenAiConfig(cfg);
+				setCustomOpenAiInputs((prev) => ({
+					...prev,
+					baseUrl: cfg.baseUrl,
+					model: cfg.model,
+				}));
+			}
 		} catch (err) {
-			console.error("[useDubbingController] Failed to check API keys:", err);
+			console.error("[useDubbingController] Failed to check API keys & config:", err);
 		}
 	}, []);
+
+	// Save custom OpenAI / OpenAI-compatible configuration
+	const handleSaveCustomOpenAiConfig = useCallback(async () => {
+		if (!window.electronAPI?.saveCustomOpenAiConfig) return;
+		try {
+			const res = await window.electronAPI.saveCustomOpenAiConfig({
+				apiKey: customOpenAiInputs.apiKey.trim() || undefined,
+				baseUrl: customOpenAiInputs.baseUrl.trim() || undefined,
+				model: customOpenAiInputs.model.trim() || undefined,
+			});
+			if (res.success) {
+				toast.success("Saved OpenAI / Custom endpoint settings");
+				setCustomOpenAiConfig({
+					baseUrl: customOpenAiInputs.baseUrl.trim(),
+					model: customOpenAiInputs.model.trim() || "gpt-4o-mini",
+					hasApiKey: Boolean(customOpenAiInputs.apiKey.trim() || customOpenAiConfig.hasApiKey),
+				});
+				setCustomOpenAiInputs((prev) => ({ ...prev, apiKey: "" }));
+				await refreshApiKeys();
+			} else {
+				toast.error(res.error ?? "Failed to save configuration");
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to save config");
+		}
+	}, [customOpenAiInputs, customOpenAiConfig.hasApiKey, refreshApiKeys]);
 
 	// Save an API key securely via Electron safeStorage
 	const handleSaveApiKey = useCallback(
@@ -189,6 +294,53 @@ export function useDubbingController({
 			}
 		} catch (err) {
 			console.error(`[useDubbingController] Failed checking status for ${quant}:`, err);
+		}
+	}, []);
+
+	// Check TTS model status for a given quantization
+	const checkTtsModelStatus = useCallback(async (quant: TtsQuantization) => {
+		if (!window.electronAPI?.getTtsModelStatus) return;
+		try {
+			const res = await window.electronAPI.getTtsModelStatus(quant);
+			if (res.success) {
+				setTtsModelStatusByQuantization((prev) => ({
+					...prev,
+					[quant]: {
+						exists: Boolean(res.exists),
+						path: res.path ?? null,
+						isDownloading: false,
+						progress: res.exists ? 100 : 0,
+					},
+				}));
+			}
+		} catch (err) {
+			console.error(`[useDubbingController] Failed checking TTS model status for ${quant}:`, err);
+		}
+	}, []);
+
+	// Download Fish Audio S2-Pro TTS model
+	const handleDownloadTtsModel = useCallback(async (quant: TtsQuantization) => {
+		if (!window.electronAPI?.downloadTtsModel) return;
+		setTtsModelStatusByQuantization((prev) => ({
+			...prev,
+			[quant]: { ...prev[quant], isDownloading: true, progress: 0, error: undefined },
+		}));
+		try {
+			const res = await window.electronAPI.downloadTtsModel(quant);
+			if (!res.success) {
+				setTtsModelStatusByQuantization((prev) => ({
+					...prev,
+					[quant]: { ...prev[quant], isDownloading: false, error: res.error },
+				}));
+				toast.error(res.error ?? `Failed to download ${quant.toUpperCase()} weights`);
+			}
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : "TTS Download failed";
+			setTtsModelStatusByQuantization((prev) => ({
+				...prev,
+				[quant]: { ...prev[quant], isDownloading: false, error: msg },
+			}));
+			toast.error(msg);
 		}
 	}, []);
 
@@ -269,7 +421,41 @@ export function useDubbingController({
 		void checkModelStatus("int8");
 		void checkModelStatus("fp16");
 		void checkModelStatus("fp32");
-	}, [refreshApiKeys, checkModelStatus]);
+		void checkTtsModelStatus("q4_k_m");
+		void checkTtsModelStatus("q8_0");
+		void checkTtsModelStatus("fp16");
+	}, [refreshApiKeys, checkModelStatus, checkTtsModelStatus]);
+
+	// Listen to TTS download progress
+	useEffect(() => {
+		if (!window.electronAPI?.onTtsModelDownloadProgress) return;
+		const unsubscribe = window.electronAPI.onTtsModelDownloadProgress((state) => {
+			const quant = state.quantization;
+			if (!quant) return;
+			setTtsModelStatusByQuantization((prev) => ({
+				...prev,
+				[quant]: {
+					exists: state.status === "downloaded",
+					path: state.path ?? null,
+					isDownloading: state.status === "downloading",
+					progress: state.progress,
+					speed: state.speed,
+					eta: state.eta,
+					error: state.error,
+				},
+			}));
+
+			if (state.status === "downloaded") {
+				toast.success(`Fish Audio S2-Pro (${quant.toUpperCase()}) downloaded successfully`);
+			} else if (state.status === "error" && state.error) {
+				toast.error(state.error);
+			}
+		});
+
+		return () => {
+			unsubscribe();
+		};
+	}, []);
 
 	// Listen to download progress
 	useEffect(() => {
@@ -356,6 +542,13 @@ export function useDubbingController({
 				engine: translationEngine,
 				quantization: translationQuantization,
 				apiProvider: apiTranslationProvider,
+				customOpenAiConfig:
+					apiTranslationProvider === "openai"
+						? {
+								baseUrl: customOpenAiConfig.baseUrl || undefined,
+								model: customOpenAiConfig.model || undefined,
+							}
+						: undefined,
 			});
 
 			if (!translateRes.success || !translateRes.translatedCues) {
@@ -392,6 +585,7 @@ export function useDubbingController({
 					referenceAudioPath: currentRefPath,
 					referenceTranscript: currentRefTranscript,
 					targetLanguage,
+					quantization: ttsQuantization,
 				});
 
 				if (!synthRes.success || !synthRes.dubbedAudioPath) {
@@ -529,16 +723,27 @@ export function useDubbingController({
 		apiTranslationProvider,
 		updateApiTranslationProvider,
 
-		// API Keys
+		// API Keys & Custom API Endpoints
 		savedApiKeys,
 		apiKeyInputs,
 		setApiKeyInputs,
 		handleSaveApiKey,
+		customOpenAiConfig,
+		customOpenAiInputs,
+		setCustomOpenAiInputs,
+		handleSaveCustomOpenAiConfig,
 
 		// Local Quantized Models
 		modelStatusByQuantization,
 		handleDownloadModel,
 		checkModelStatus,
+
+		// Fish Audio S2-Pro Local Engine
+		ttsQuantization,
+		updateTtsQuantization,
+		ttsModelStatusByQuantization,
+		handleDownloadTtsModel,
+		checkTtsModelStatus,
 
 		// Voice Sample
 		referenceAudioPath,

@@ -10,9 +10,11 @@ vi.mock("electron", () => ({
 vi.mock("./storage", () => ({
 	getSecureApiKey: vi.fn(),
 	saveSecureApiKey: vi.fn(),
+	getCustomOpenAiConfig: vi.fn().mockReturnValue(null),
+	saveCustomOpenAiConfig: vi.fn(),
 }));
 
-import { getSecureApiKey } from "./storage";
+import { getCustomOpenAiConfig, getSecureApiKey } from "./storage";
 import {
 	getTranslationModelDir,
 	getTranslationModelFilePath,
@@ -69,6 +71,7 @@ describe("translateTranscript", () => {
 
 	it("returns error if API engine selected but no API key is provided or stored", async () => {
 		vi.mocked(getSecureApiKey).mockReturnValue(null);
+		vi.mocked(getCustomOpenAiConfig).mockReturnValue(null);
 
 		const result = await translateTranscript({
 			textCues: [{ id: "c1", text: "Hello world" }],
@@ -83,6 +86,7 @@ describe("translateTranscript", () => {
 
 	it("translates cues via OpenAI API when configured", async () => {
 		vi.mocked(getSecureApiKey).mockReturnValue("test-sk-key");
+		vi.mocked(getCustomOpenAiConfig).mockReturnValue(null);
 
 		globalThis.fetch = vi.fn().mockResolvedValue({
 			ok: true,
@@ -109,8 +113,44 @@ describe("translateTranscript", () => {
 		);
 	});
 
+	it("translates cues via custom OpenAI-compatible endpoint (Groq/Ollama/OpenRouter)", async () => {
+		vi.mocked(getSecureApiKey).mockReturnValue(null);
+		vi.mocked(getCustomOpenAiConfig).mockReturnValue({
+			apiKey: "gsk_custom_key",
+			baseUrl: "https://api.groq.com/openai/v1",
+			model: "llama-3.3-70b-versatile",
+		});
+
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				choices: [{ message: { content: "Bonjour le monde" } }],
+			}),
+		} as Response);
+
+		const result = await translateTranscript({
+			textCues: [{ id: "c1", text: "Hello world" }],
+			targetLang: "fr",
+			engine: "api",
+			apiProvider: "openai",
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.translatedCues?.[0].text).toBe("Bonjour le monde");
+		expect(globalThis.fetch).toHaveBeenCalledWith(
+			"https://api.groq.com/openai/v1/chat/completions",
+			expect.objectContaining({
+				method: "POST",
+				headers: expect.objectContaining({
+					Authorization: "Bearer gsk_custom_key",
+				}),
+			}),
+		);
+	});
+
 	it("translates cues via DeepL API when configured", async () => {
 		vi.mocked(getSecureApiKey).mockReturnValue("test-deepl-key:fx");
+		vi.mocked(getCustomOpenAiConfig).mockReturnValue(null);
 
 		globalThis.fetch = vi.fn().mockResolvedValue({
 			ok: true,

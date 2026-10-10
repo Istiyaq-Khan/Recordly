@@ -31,7 +31,6 @@ const CHROME_MEDIA_SOURCE = "desktop";
 const RECORDING_FILE_PREFIX = "recording-";
 const AUDIO_BITRATE_VOICE = 128_000;
 const AUDIO_BITRATE_SYSTEM = 192_000;
-const MIC_GAIN_BOOST = 1.4;
 const WEBCAM_BITRATE = 8_000_000;
 const WEBCAM_WIDTH = 1280;
 const WEBCAM_HEIGHT = 720;
@@ -411,6 +410,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const countdownDelayLoaded = useRef(false);
 	const recordingPrefsLoaded = useRef(false);
 	const pendingWebcamPathPromise = useRef<Promise<string | null> | null>(null);
+	const pendingMicBlobPromise = useRef<Promise<Blob | null> | null>(null);
 	const webcamStopPromise = useRef<Promise<string | null> | null>(null);
 	const webcamStopResolver = useRef<((path: string | null) => void) | null>(null);
 	const resolvedWebcamPath = useRef<string | null>(null);
@@ -1469,6 +1469,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				}
 			}
 			pendingWebcamPathPromise.current = stopWebcamRecorder();
+			if (micFallbackRecorder.current && micFallbackRecorder.current.state !== "inactive") {
+				pendingMicBlobPromise.current = stopMicFallbackRecorder();
+			}
 			try {
 				recorder.requestData();
 			} catch (error) {
@@ -2053,26 +2056,31 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				const systemAudioTrack = screenMediaStream.getAudioTracks()[0];
 				const micAudioTrack = microphoneStream.current?.getAudioTracks()[0];
 
-				if (systemAudioTrack && micAudioTrack) {
-					const context = new AudioContext({ sampleRate: 48000 });
-					mixingContext.current = context;
-					const systemSource = context.createMediaStreamSource(
-						new MediaStream([systemAudioTrack]),
-					);
-					const micSource = context.createMediaStreamSource(
-						new MediaStream([micAudioTrack]),
-					);
-					const micGain = context.createGain();
-					micGain.gain.value = MIC_GAIN_BOOST;
-					const destination = context.createMediaStreamDestination();
+				if (systemAudioTrack && micAudioTrack && microphoneStream.current) {
+					// Pure isolated capture: Screen video container carries isolated system audio
+					stream.current.addTrack(systemAudioTrack);
+					systemAudioIncluded = true;
 
-					systemSource.connect(destination);
-					micSource.connect(micGain).connect(destination);
-
-					const mixedTrack = destination.stream.getAudioTracks()[0];
-					if (mixedTrack) {
-						stream.current.addTrack(mixedTrack);
-						systemAudioIncluded = true;
+					// Isolated microphone stream is recorded concurrently to dedicated sidecar
+					micFallbackChunks.current = [];
+					micFallbackStartDelayMs.current = 0;
+					micFallbackTrackSettings.current = createMicrophoneTrackSettingsSnapshot(
+						microphoneStream.current,
+					);
+					try {
+						const micRecorder = new MediaRecorder(microphoneStream.current, {
+							mimeType: "audio/webm;codecs=opus",
+							audioBitsPerSecond: AUDIO_BITRATE_VOICE,
+						});
+						micFallbackRecorder.current = micRecorder;
+						micRecorder.ondataavailable = appendMicFallbackChunk;
+						micFallbackRecorderStartedAt.current = performance.now();
+						micRecorder.start(RECORDER_TIMESLICE_MS);
+					} catch (micRecordError) {
+						console.warn(
+							"Failed to start isolated browser microphone recorder:",
+							micRecordError,
+						);
 					}
 				} else if (systemAudioTrack) {
 					stream.current.addTrack(systemAudioTrack);
@@ -2161,6 +2169,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				if (event.data && event.data.size > 0) chunks.current.push(event.data);
 			};
 			recorder.onstop = async () => {
+				const micBlobPromise = pendingMicBlobPromise.current ?? stopMicFallbackRecorder();
+				pendingMicBlobPromise.current = null;
 				cleanupCapturedMedia();
 				if (chunks.current.length === 0) {
 					setFinalizing(false);
@@ -2200,13 +2210,25 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						// 1. Launch editor immediately (Optimistic UI)
 						await finalizeRecordingSession(finalVideoPath, null);
 
-						// 2. Background webcam processing
+						// 2. Background webcam & isolated mic processing
 						void (async () => {
-							const webcamPath = pendingWebcamPathPromise.current
-								? await pendingWebcamPathPromise.current
-								: resolvedWebcamPath.current;
-
 							try {
+								const webcamPathPromise = pendingWebcamPathPromise.current
+									? pendingWebcamPathPromise.current
+									: Promise.resolve(resolvedWebcamPath.current);
+								const micReadyPromise = storeMicrophoneSidecar(
+									micBlobPromise,
+									finalVideoPath,
+									0,
+									micFallbackTrackSettings.current,
+								);
+								const [webcamResult] = await Promise.allSettled([
+									webcamPathPromise,
+									micReadyPromise,
+								]);
+								const webcamPath =
+									webcamResult.status === "fulfilled" ? webcamResult.value : null;
+
 								if (webcamPath) {
 									await window.electronAPI.setCurrentRecordingSession({
 										videoPath: finalVideoPath,
@@ -2217,7 +2239,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 									});
 								}
 							} finally {
-								// After all background tasks are done (webcam),
+								// After all background tasks are done (webcam, mic sidecars),
 								// we can safely close the HUD window to release hardware and resources.
 								if (typeof window.electronAPI?.hudOverlayClose === "function") {
 									console.log(
@@ -2317,6 +2339,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			if (webcamRecorder.current?.state === "recording") {
 				webcamRecorder.current.pause();
 			}
+			if (micFallbackRecorder.current?.state === "recording") {
+				pauseMicFallbackRecorder();
+			}
 			void (async () => {
 				const boundaryMs = Date.now();
 				markRecordingPaused(boundaryMs);
@@ -2362,6 +2387,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			mediaRecorder.current.resume();
 			if (webcamRecorder.current?.state === "paused") {
 				webcamRecorder.current.resume();
+			}
+			if (micFallbackRecorder.current?.state === "paused") {
+				resumeMicFallbackRecorder();
 			}
 			void (async () => {
 				const boundaryMs = Date.now();

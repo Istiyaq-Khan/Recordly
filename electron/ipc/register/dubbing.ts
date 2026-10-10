@@ -2,12 +2,19 @@ import { ipcMain } from "electron";
 import { alignDubbedCaptions } from "../dubbing/captionAlignment";
 import {
 	checkLocalDubbingEngineStatus,
+	downloadTtsModelWithProgress,
+	getTtsModelStatus,
 	synthesizeAudioWithApi,
 	synthesizeAudioWithLocalEngine,
 } from "../dubbing/fishAudio";
 import { SUPPORTED_DUBBING_LANGUAGES } from "../dubbing/nllbLanguages";
 import { extractVoiceReferenceSample } from "../dubbing/referenceAudio";
-import { hasSecureApiKey, saveSecureApiKey } from "../dubbing/storage";
+import {
+	getCustomOpenAiConfig,
+	hasSecureApiKey,
+	saveCustomOpenAiConfig,
+	saveSecureApiKey,
+} from "../dubbing/storage";
 import {
 	downloadTranslationModel,
 	getTranslationModelStatus,
@@ -21,6 +28,7 @@ import type {
 	SynthesizeApiOptions,
 	SynthesizeLocalOptions,
 	TranslateOptions,
+	TtsQuantization,
 } from "../dubbing/types";
 
 export function registerDubbingHandlers() {
@@ -44,6 +52,7 @@ export function registerDubbingHandlers() {
 			hasAceDataApiKey: hasSecureApiKey("acedatacloud"),
 			hasOpenAiApiKey: hasSecureApiKey("openai"),
 			hasDeepLApiKey: hasSecureApiKey("deepl"),
+			customOpenAiConfig: getCustomOpenAiConfig(),
 		};
 	});
 
@@ -69,6 +78,29 @@ export function registerDubbingHandlers() {
 				return { success: true, path: modelPath };
 			} catch (error) {
 				console.error("Failed to download translation model:", error);
+				return { success: false, error: String(error) };
+			}
+		},
+	);
+
+	ipcMain.handle(
+		"dubbing:get-tts-model-status",
+		async (_, quantization?: TtsQuantization) => {
+			return await getTtsModelStatus(quantization ?? "q4_k_m");
+		},
+	);
+
+	ipcMain.handle(
+		"dubbing:download-tts-model",
+		async (event, quantization?: TtsQuantization) => {
+			try {
+				const modelPath = await downloadTtsModelWithProgress(
+					event.sender,
+					quantization ?? "q4_k_m",
+				);
+				return { success: true, path: modelPath };
+			} catch (error) {
+				console.error("Failed to download Fish Audio TTS model:", error);
 				return { success: false, error: String(error) };
 			}
 		},
@@ -113,4 +145,12 @@ export function registerDubbingHandlers() {
 			deepl: hasSecureApiKey("deepl"),
 		};
 	});
+
+	ipcMain.handle(
+		"dubbing:save-custom-openai-config",
+		(_, config: { baseUrl?: string | null; model?: string | null }) => {
+			const success = saveCustomOpenAiConfig(config);
+			return { success };
+		},
+	);
 }

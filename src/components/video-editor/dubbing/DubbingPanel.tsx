@@ -19,7 +19,12 @@ import type {
 	DubbingTranslationEngine,
 	DubbingTtsBackend,
 } from "../types";
-import { QUANTIZATION_OPTIONS, SUPPORTED_DUBBING_LANGUAGES } from "./constants";
+import {
+	QUANTIZATION_OPTIONS,
+	SUPPORTED_DUBBING_LANGUAGES,
+	TTS_QUANTIZATION_OPTIONS,
+	type TtsQuantization,
+} from "./constants";
 import type { useDubbingController } from "./useDubbingController";
 
 interface DubbingPanelProps {
@@ -258,11 +263,11 @@ export function DubbingPanel({
 					}
 					className="grid grid-cols-2 gap-2"
 				>
-					<ChoiceItem value="local-nllb">Local Offline (NLLB)</ChoiceItem>
+					<ChoiceItem value="local-nllb">Local Model</ChoiceItem>
 					<ChoiceItem value="api">Cloud API</ChoiceItem>
 				</ChoiceGroup>
 
-				{/* If Local Offline NLLB Engine selected */}
+				{/* If Local Model NLLB Engine selected */}
 				{translationEngine === "local-nllb" && (
 					<div className="flex flex-col gap-3 pt-1">
 						<div className="flex items-center justify-between">
@@ -295,31 +300,31 @@ export function DubbingPanel({
 									>
 										<Radio.Content className="w-full">
 											<div className="flex items-center justify-between w-full">
-												<div className="flex items-center gap-2">
-													<Radio.Control>
-														<Radio.Indicator />
-													</Radio.Control>
-													<span className="text-xs font-semibold">
-														{opt.name}
-													</span>
-													<span className="rounded bg-foreground/10 px-1.5 py-0.2 text-[10px] text-muted-foreground">
-														{opt.badge}
-													</span>
-													{status.exists && (
-														<span className="rounded bg-emerald-500/15 text-emerald-500 px-1 py-0.2 text-[9px] font-medium">
-															Installed
-														</span>
-													)}
-												</div>
-												<span className="text-[11px] font-mono text-muted-foreground">
-													{opt.size}
+											<div className="flex items-center gap-2">
+												<Radio.Control>
+													<Radio.Indicator />
+												</Radio.Control>
+												<span className="text-xs font-semibold">
+													{opt.name}
 												</span>
+												<span className="rounded bg-foreground/10 px-1.5 py-0.2 text-[10px] text-muted-foreground">
+													{opt.badge}
+												</span>
+												{status.exists && (
+													<span className="rounded bg-emerald-500/15 text-emerald-500 px-1 py-0.2 text-[9px] font-medium">
+														Installed
+													</span>
+												)}
 											</div>
-											<p className="text-[11px] text-muted-foreground mt-1 ml-6 leading-tight">
-												{opt.description}
-											</p>
-										</Radio.Content>
-									</Radio>
+											<span className="text-[11px] font-mono text-muted-foreground">
+												{opt.size}
+											</span>
+										</div>
+										<p className="text-[11px] text-muted-foreground mt-1 ml-6 leading-tight">
+											{opt.description}
+										</p>
+									</Radio.Content>
+								</Radio>
 								);
 							})}
 						</RadioGroup>
@@ -387,54 +392,129 @@ export function DubbingPanel({
 							}
 							className="grid grid-cols-2 gap-2"
 						>
-							<ChoiceItem value="openai">OpenAI</ChoiceItem>
+							<ChoiceItem value="openai">OpenAI / Compatible</ChoiceItem>
 							<ChoiceItem value="deepl">DeepL</ChoiceItem>
 						</ChoiceGroup>
 
-						{/* API Key management */}
-						<div className="flex flex-col gap-1.5">
-							<div className="flex items-center justify-between">
-								<Label className="text-[11px] text-muted-foreground">
-									{apiTranslationProvider.toUpperCase()} API Key
-								</Label>
-								{savedApiKeys[apiTranslationProvider] && (
-									<span className="text-[10px] text-emerald-500 font-medium">
-										Saved securely
-									</span>
-								)}
-							</div>
-							<div className="flex gap-2">
-								<input
-									type="password"
-									value={apiKeyTempInputs[apiTranslationProvider]}
-									onChange={(e) =>
-										setApiKeyTempInputs((prev) => ({
-											...prev,
-											[apiTranslationProvider]: e.target.value,
-										}))
-									}
-									placeholder={
-										savedApiKeys[apiTranslationProvider]
-											? "••••••••••••••••"
-											: "Enter API key"
-									}
-									className="flex-1 rounded-md border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-								/>
+						{apiTranslationProvider === "openai" ? (
+							/* OpenAI & OpenAI-Compatible Custom Endpoint Config */
+							<div className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/60 p-3">
+								<div className="flex items-center justify-between">
+									<Label className="text-[12px] font-medium">OpenAI / Custom Endpoint</Label>
+									{(controller.customOpenAiConfig.hasApiKey || savedApiKeys.openai) && (
+										<span className="text-[10px] text-emerald-500 font-medium">
+											Configured
+										</span>
+									)}
+								</div>
+
+								<div className="flex flex-col gap-1">
+									<Label className="text-[11px] text-muted-foreground">API Key</Label>
+									<input
+										type="password"
+										value={controller.customOpenAiInputs.apiKey}
+										onChange={(e) =>
+											controller.setCustomOpenAiInputs((prev) => ({
+												...prev,
+												apiKey: e.target.value,
+											}))
+										}
+										placeholder={
+											controller.customOpenAiConfig.hasApiKey || savedApiKeys.openai
+												? "•••••••••••••••• (saved)"
+												: "sk-..."
+										}
+										className="rounded-md border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+									/>
+								</div>
+
+								<div className="flex flex-col gap-1">
+									<Label className="text-[11px] text-muted-foreground">
+										Custom API Base URL (optional)
+									</Label>
+									<input
+										type="text"
+										value={controller.customOpenAiInputs.baseUrl}
+										onChange={(e) =>
+											controller.setCustomOpenAiInputs((prev) => ({
+												...prev,
+												baseUrl: e.target.value,
+											}))
+										}
+										placeholder="https://api.openai.com/v1 (or Groq, Together, Ollama, OpenRouter)"
+										className="rounded-md border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+									/>
+								</div>
+
+								<div className="flex flex-col gap-1">
+									<Label className="text-[11px] text-muted-foreground">Model Name</Label>
+									<input
+										type="text"
+										value={controller.customOpenAiInputs.model}
+										onChange={(e) =>
+											controller.setCustomOpenAiInputs((prev) => ({
+												...prev,
+												model: e.target.value,
+											}))
+										}
+										placeholder="gpt-4o-mini (e.g., gpt-4o, llama-3.3-70b-versatile)"
+										className="rounded-md border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+									/>
+								</div>
+
 								<Button
 									size="sm"
 									variant="outline"
-									className="h-7 text-xs"
-									onPress={() =>
-										handleSaveApiKey(
-											apiTranslationProvider,
-											apiKeyTempInputs[apiTranslationProvider],
-										)
-									}
+									className="h-7 text-xs self-end mt-1"
+									onPress={controller.handleSaveCustomOpenAiConfig}
 								>
-									Save
+									Save Endpoint Settings
 								</Button>
 							</div>
-						</div>
+						) : (
+							/* DeepL API Config */
+							<div className="flex flex-col gap-2 rounded-xl border border-border/80 bg-card/60 p-3">
+								<div className="flex items-center justify-between">
+									<Label className="text-[12px] font-medium">DeepL API Key</Label>
+									{savedApiKeys.deepl && (
+										<span className="text-[10px] text-emerald-500 font-medium">
+											Saved securely
+										</span>
+									)}
+								</div>
+								<div className="flex gap-2">
+									<input
+										type="password"
+										value={apiKeyTempInputs.deepl}
+										onChange={(e) =>
+											setApiKeyTempInputs((prev) => ({
+												...prev,
+												deepl: e.target.value,
+											}))
+										}
+										placeholder={
+											savedApiKeys.deepl
+												? "••••••••••••••••"
+												: "Enter DeepL API key"
+										}
+										className="flex-1 rounded-md border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+									/>
+									<Button
+										size="sm"
+										variant="outline"
+										className="h-7 text-xs"
+										onPress={() =>
+											handleSaveApiKey("deepl", apiKeyTempInputs.deepl)
+										}
+									>
+										Save
+									</Button>
+								</div>
+								<p className="text-[10px] text-muted-foreground leading-tight">
+									Target language codes are automatically normalized for DeepL (e.g., EN-US, PT-BR, ZH-HANS).
+								</p>
+							</div>
+						)}
 					</div>
 				)}
 			</section>
@@ -523,11 +603,127 @@ export function DubbingPanel({
 				)}
 
 				{ttsBackend === "local" && (
-					<div className="rounded-xl border border-border/80 bg-card/60 p-3 flex flex-col gap-1.5">
-						<span className="text-xs font-medium">Local Zero-Shot Engine</span>
-						<p className="text-[11px] text-muted-foreground leading-relaxed">
-							Executes voice cloning directly on your hardware via local inference.
-						</p>
+					<div className="flex flex-col gap-3 pt-1">
+						<div className="flex items-center justify-between">
+							<Label className="text-[12px] font-medium">Fish Audio S2-Pro Weights</Label>
+							<span className="text-[11px] text-muted-foreground">Select quantization</span>
+						</div>
+
+						{/* Radio group for TTS quantization options */}
+						<RadioGroup
+							value={controller.ttsQuantization}
+							onChange={(val) => controller.updateTtsQuantization(val as TtsQuantization)}
+							className="flex flex-col gap-2"
+						>
+							{TTS_QUANTIZATION_OPTIONS.map((opt) => {
+								const status = controller.ttsModelStatusByQuantization[opt.id];
+								return (
+									<Radio
+										key={opt.id}
+										value={opt.id}
+										className={cn(
+											"rounded-xl border p-2.5 transition-all",
+											controller.ttsQuantization === opt.id
+												? "border-primary bg-primary/5"
+												: "border-border hover:bg-card/40",
+										)}
+									>
+										<Radio.Content className="w-full">
+											<div className="flex items-center justify-between w-full">
+												<div className="flex items-center gap-2">
+													<Radio.Control>
+														<Radio.Indicator />
+													</Radio.Control>
+													<span className="text-xs font-semibold">{opt.name}</span>
+													<span className="rounded bg-foreground/10 px-1.5 py-0.2 text-[10px] text-muted-foreground">
+														{opt.badge}
+													</span>
+													{status?.exists && (
+														<span className="rounded bg-emerald-500/15 text-emerald-500 px-1 py-0.2 text-[9px] font-medium">
+															Installed
+														</span>
+													)}
+												</div>
+												<span className="text-[11px] font-mono text-muted-foreground">{opt.size}</span>
+											</div>
+											<div className="flex items-center justify-between mt-1 ml-6">
+												<p className="text-[11px] text-muted-foreground leading-tight">
+													{opt.description}
+												</p>
+												<span className="text-[10px] font-medium text-muted-foreground/80 shrink-0 ml-2">
+													{opt.recommendedRam}
+												</span>
+											</div>
+										</Radio.Content>
+									</Radio>
+								);
+							})}
+						</RadioGroup>
+
+						{/* Download status & action card */}
+						{(() => {
+							const selectedTtsStatus = controller.ttsModelStatusByQuantization[controller.ttsQuantization];
+							const isDownloading = selectedTtsStatus?.isDownloading;
+							const exists = selectedTtsStatus?.exists;
+
+							return (
+								<div className="rounded-xl border border-border/80 bg-card p-3 flex flex-col gap-2">
+									<div className="flex items-center justify-between">
+										<div className="flex flex-col gap-0.5">
+											<div className="flex items-center gap-2">
+												<span className="text-xs font-medium">
+													{controller.ttsQuantization.toUpperCase()} Model:
+												</span>
+												{exists ? (
+													<span className="text-[11px] text-emerald-500 font-medium">
+														Installed & Ready Offline
+													</span>
+												) : isDownloading ? (
+													<span className="text-[11px] text-primary font-medium">
+														Downloading ({Math.round(selectedTtsStatus.progress)}%)
+													</span>
+												) : (
+													<span className="text-[11px] text-amber-500 font-medium">
+														Not installed
+													</span>
+												)}
+											</div>
+											{isDownloading && (
+												<div className="text-[10px] text-muted-foreground">
+													{selectedTtsStatus.speed
+														? `${(selectedTtsStatus.speed / 1_048_576).toFixed(1)} MB/s`
+														: "Connecting..."}{" "}
+													{selectedTtsStatus.eta !== undefined && selectedTtsStatus.eta > 0
+														? `• ETA: ${selectedTtsStatus.eta}s`
+														: ""}
+												</div>
+											)}
+										</div>
+
+										{!exists && !isDownloading && (
+											<Button
+												size="sm"
+												variant="primary"
+												className="h-7 text-xs px-2.5"
+												onPress={() =>
+													controller.handleDownloadTtsModel(controller.ttsQuantization)
+												}
+											>
+												Download
+											</Button>
+										)}
+									</div>
+
+									{isDownloading && (
+										<ProgressBar
+											value={selectedTtsStatus.progress}
+											className="w-full h-1.5"
+											aria-label="Fish Audio model download progress"
+										/>
+									)}
+								</div>
+							);
+						})()}
 					</div>
 				)}
 			</section>
@@ -572,7 +768,9 @@ export function DubbingPanel({
 					onPress={handleGenerateDubbing}
 					isDisabled={
 						isGenerating ||
-						(translationEngine === "local-nllb" && !selectedQuantStatus.exists)
+						(translationEngine === "local-nllb" && !selectedQuantStatus.exists) ||
+						(ttsBackend === "local" &&
+							!controller.ttsModelStatusByQuantization[controller.ttsQuantization]?.exists)
 					}
 				>
 					{isGenerating
@@ -582,10 +780,18 @@ export function DubbingPanel({
 
 				{translationEngine === "local-nllb" && !selectedQuantStatus.exists && (
 					<p className="text-[11px] text-amber-500 text-center">
-						Please download the {translationQuantization.toUpperCase()} model first to
+						Please download the {translationQuantization.toUpperCase()} translation model first to
 						dub offline.
 					</p>
 				)}
+
+				{ttsBackend === "local" &&
+					!controller.ttsModelStatusByQuantization[controller.ttsQuantization]?.exists && (
+						<p className="text-[11px] text-amber-500 text-center">
+							Please download the {controller.ttsQuantization.toUpperCase()} Fish Audio weights
+							to synthesize offline.
+						</p>
+					)}
 			</section>
 		</div>
 	);

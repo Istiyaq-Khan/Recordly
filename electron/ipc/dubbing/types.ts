@@ -14,6 +14,8 @@ export interface DubbingLanguage {
 	nativeName: string; // Native name (e.g., "Español")
 }
 
+export type TtsQuantization = "q4_k_m" | "q8_0" | "fp16";
+
 export interface DubbingStatus {
 	localModelReady: boolean;
 	localModelQuantization: DubbingModelQuantization | null;
@@ -22,6 +24,10 @@ export interface DubbingStatus {
 	hasAceDataApiKey: boolean;
 	hasOpenAiApiKey: boolean;
 	hasDeepLApiKey: boolean;
+	customOpenAiConfig?: {
+		baseUrl: string | null;
+		model: string | null;
+	};
 }
 
 export interface ExtractVoiceReferenceOptions {
@@ -46,6 +52,7 @@ export interface TranslateOptions {
 	engine: DubbingTranslationEngine;
 	quantization?: DubbingModelQuantization;
 	apiProvider?: DubbingApiTranslationProvider;
+	customOpenAiConfig?: { apiKey?: string; baseUrl?: string; model?: string };
 	apiKey?: string;
 }
 
@@ -71,6 +78,7 @@ export interface SynthesizeLocalOptions {
 	referenceAudioPath: string;
 	referenceTranscript: string;
 	targetLanguage?: string;
+	quantization?: TtsQuantization;
 }
 
 export interface SynthesizeResult {

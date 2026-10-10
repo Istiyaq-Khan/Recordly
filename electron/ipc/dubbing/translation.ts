@@ -1,53 +1,62 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type Electron from "electron";
-import { downloadFileWithProgress } from "../captions/whisper";
 import { DEFAULT_NLLB_MODEL_ID, TRANSLATION_MODELS_DIR } from "../constants";
-import { resolveFloresLanguageCode } from "./nllbLanguages";
-import { getSecureApiKey } from "./storage";
+import { resolveDeepLLanguageCode, resolveFloresLanguageCode } from "./nllbLanguages";
+import { getCustomOpenAiConfig, getSecureApiKey } from "./storage";
 import type { DubbingModelQuantization, TranslateOptions, TranslateResult } from "./types";
 
-// HuggingFace CDN URLs for Xenova/nllb-200-distilled-600M ONNX weights by quantization
-const NLLB_MODEL_FILENAMES: Record<
-	DubbingModelQuantization,
-	{ onnxFile: string; isQuantized: boolean }
-> = {
-	int8: {
-		onnxFile: "decoder_model_merged_quantized.onnx",
-		isQuantized: true,
-	},
-	fp16: {
-		onnxFile: "decoder_model_merged_fp16.onnx",
-		isQuantized: false,
-	},
-	fp32: {
-		onnxFile: "decoder_model_merged.onnx",
-		isQuantized: false,
-	},
-};
+let activeTranslationPipeline: any = null;
+let activeQuantization: DubbingModelQuantization | null = null;
 
 export function getTranslationModelDir(quantization: DubbingModelQuantization = "int8"): string {
 	return path.join(TRANSLATION_MODELS_DIR, `nllb-200-distilled-600M-${quantization}`);
 }
 
+export function getTranslationModelStatusFilePath(
+	quantization: DubbingModelQuantization = "int8",
+): string {
+	return path.join(getTranslationModelDir(quantization), "model_ready.json");
+}
+
 export function getTranslationModelFilePath(
 	quantization: DubbingModelQuantization = "int8",
 ): string {
-	const dir = getTranslationModelDir(quantization);
-	return path.join(dir, NLLB_MODEL_FILENAMES[quantization].onnxFile);
+	const filename =
+		quantization === "int8"
+			? "decoder_model_merged_quantized.onnx"
+			: quantization === "fp16"
+				? "decoder_model_merged_fp16.onnx"
+				: "decoder_model_merged.onnx";
+	return path.join(getTranslationModelDir(quantization), "onnx", filename);
 }
 
 export async function getTranslationModelStatus(quantization: DubbingModelQuantization = "int8") {
 	try {
-		const filePath = getTranslationModelFilePath(quantization);
-		await fs.access(filePath);
+		const statusFile = getTranslationModelStatusFilePath(quantization);
+		await fs.access(statusFile);
 		return {
 			success: true,
 			exists: true,
-			path: filePath,
+			path: getTranslationModelDir(quantization),
 			quantization,
 		};
 	} catch {
+		// Also check if cache dir exists and has models
+		try {
+			const dir = getTranslationModelDir(quantization);
+			const files = await fs.readdir(dir);
+			if (files.length > 0) {
+				return {
+					success: true,
+					exists: true,
+					path: dir,
+					quantization,
+				};
+			}
+		} catch {
+			// ignore
+		}
 		return {
 			success: true,
 			exists: false,
@@ -76,8 +85,6 @@ export async function downloadTranslationModel(
 ): Promise<string> {
 	const dir = getTranslationModelDir(quantization);
 	await fs.mkdir(dir, { recursive: true });
-	const targetPath = getTranslationModelFilePath(quantization);
-	const tempPath = `${targetPath}.download`;
 
 	sendTranslationModelDownloadProgress(webContents, {
 		status: "downloading",
@@ -87,30 +94,52 @@ export async function downloadTranslationModel(
 	});
 
 	try {
-		// Construct download URL on HuggingFace Xenova repository
-		const onnxFileName = NLLB_MODEL_FILENAMES[quantization].onnxFile;
-		const downloadUrl = `https://huggingface.co/${DEFAULT_NLLB_MODEL_ID}/resolve/main/onnx/${onnxFileName}`;
+		const { pipeline, env } = await import("@huggingface/transformers");
+		env.cacheDir = TRANSLATION_MODELS_DIR;
+		const dtype = quantization === "fp16" ? "fp16" : "q8";
 
-		await fs.rm(tempPath, { force: true });
-		await downloadFileWithProgress(downloadUrl, tempPath, (progress) => {
-			sendTranslationModelDownloadProgress(webContents, {
-				status: "downloading",
-				progress,
-				quantization,
-				path: null,
-			});
+		const pipe = await pipeline("translation", DEFAULT_NLLB_MODEL_ID, {
+			dtype,
+			progress_callback: (info: any) => {
+				if (info && typeof info.progress === "number") {
+					sendTranslationModelDownloadProgress(webContents, {
+						status: "downloading",
+						progress: Math.min(100, Math.max(0, Math.round(info.progress))),
+						quantization,
+						path: null,
+					});
+				}
+			},
 		});
 
-		await fs.rename(tempPath, targetPath);
+		activeTranslationPipeline = pipe;
+		activeQuantization = quantization;
+
+		const statusFile = getTranslationModelStatusFilePath(quantization);
+		await fs.writeFile(
+			statusFile,
+			JSON.stringify(
+				{
+					quantization,
+					dtype,
+					modelId: DEFAULT_NLLB_MODEL_ID,
+					installedAt: Date.now(),
+				},
+				null,
+				2,
+			),
+		);
+
 		sendTranslationModelDownloadProgress(webContents, {
 			status: "downloaded",
 			progress: 100,
 			quantization,
-			path: targetPath,
+			path: dir,
 		});
-		return targetPath;
+
+		return dir;
 	} catch (error) {
-		await fs.rm(tempPath, { force: true }).catch(() => undefined);
+		console.error("Failed to download/initialize NLLB-200 translation model:", error);
 		sendTranslationModelDownloadProgress(webContents, {
 			status: "error",
 			progress: 0,
@@ -122,24 +151,32 @@ export async function downloadTranslationModel(
 	}
 }
 
-// API Fallback: OpenAI translation
+// API Fallback: OpenAI translation with custom endpoint support
 async function translateWithOpenAi(
 	text: string,
 	targetLanguage: string,
 	apiKey: string,
+	customConfig?: { baseUrl?: string | null; model?: string | null },
 ): Promise<string> {
-	const response = await fetch("https://api.openai.com/v1/chat/completions", {
+	const rawBaseUrl = customConfig?.baseUrl?.trim() || "https://api.openai.com/v1";
+	const baseUrl = rawBaseUrl.replace(/\/+$/, "");
+	const endpoint = baseUrl.endsWith("/chat/completions")
+		? baseUrl
+		: `${baseUrl}/chat/completions`;
+	const model = customConfig?.model?.trim() || "gpt-4o-mini";
+
+	const response = await fetch(endpoint, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
 			Authorization: `Bearer ${apiKey}`,
 		},
 		body: JSON.stringify({
-			model: "gpt-4o-mini",
+			model,
 			messages: [
 				{
 					role: "system",
-					content: `You are a professional video dubbing translator. Translate the following text into ${targetLanguage}. Maintain natural spoken flow suitable for voiceover. Return ONLY the translated text without notes or quotes.`,
+					content: `You are a professional video dubbing translator. Translate the following spoken video transcript into ${targetLanguage}. Maintain natural spoken flow, brevity, and timing suitable for voiceover. Return ONLY the translated text without notes or quotes.`,
 				},
 				{
 					role: "user",
@@ -152,14 +189,16 @@ async function translateWithOpenAi(
 
 	if (!response.ok) {
 		const errText = await response.text();
-		throw new Error(`OpenAI translation failed (${response.status}): ${errText}`);
+		throw new Error(
+			`OpenAI-compatible translation failed (${response.status}) at ${endpoint}: ${errText}`,
+		);
 	}
 
 	const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
 	return data.choices?.[0]?.message?.content?.trim() ?? text;
 }
 
-// API Fallback: DeepL translation
+// API Fallback: DeepL translation with normalized BCP-47 codes
 async function translateWithDeepL(
 	text: string,
 	targetLanguage: string,
@@ -170,6 +209,8 @@ async function translateWithDeepL(
 		? "https://api-free.deepl.com/v2/translate"
 		: "https://api.deepl.com/v2/translate";
 
+	const targetLangCode = resolveDeepLLanguageCode(targetLanguage);
+
 	const response = await fetch(endpoint, {
 		method: "POST",
 		headers: {
@@ -178,7 +219,7 @@ async function translateWithDeepL(
 		},
 		body: JSON.stringify({
 			text: [text],
-			target_lang: targetLanguage.toUpperCase().slice(0, 2),
+			target_lang: targetLangCode,
 		}),
 	});
 
@@ -205,9 +246,13 @@ export async function translateTranscript(options: TranslateOptions): Promise<Tr
 			return { success: true, translatedCues: [], fullText: "" };
 		}
 
-		// API translation fallback
+		// API translation mode
 		if (engine === "api") {
+			const customOpenAiConfig = options.customOpenAiConfig ?? getCustomOpenAiConfig();
 			let key = options.apiKey?.trim();
+			if (!key && apiProvider === "openai" && customOpenAiConfig?.apiKey) {
+				key = customOpenAiConfig.apiKey.trim();
+			}
 			if (!key) {
 				key = getSecureApiKey(apiProvider) ?? undefined;
 			}
@@ -222,7 +267,7 @@ export async function translateTranscript(options: TranslateOptions): Promise<Tr
 			for (const cue of textCues) {
 				const translated =
 					apiProvider === "openai"
-						? await translateWithOpenAi(cue.text, targetLang, key)
+						? await translateWithOpenAi(cue.text, targetLang, key, customOpenAiConfig)
 						: await translateWithDeepL(cue.text, targetLang, key);
 				translatedCues.push({ id: cue.id, text: translated });
 			}
@@ -234,20 +279,24 @@ export async function translateTranscript(options: TranslateOptions): Promise<Tr
 			};
 		}
 
-		// Local NLLB-200 translation
+		// Local Model (NLLB-200 via Transformers.js)
 		const floresTarget = resolveFloresLanguageCode(targetLang);
+		const floresSource = resolveFloresLanguageCode(options.sourceLang || "en");
 		const modelStatus = await getTranslationModelStatus(quantization);
 
-		// If local model file exists or we dynamically load with transformers
-		// For standard CPU environments without heavy native dependencies, we can also use transformers pipeline
-		// or Hugging Face Inference API / fallback translation simulation if offline model not yet downloaded
-		if (!modelStatus.exists) {
+		if (!modelStatus.exists && !activeTranslationPipeline) {
 			// Auto fallback to API if key is present
 			const openAiKey = getSecureApiKey("openai");
 			if (openAiKey) {
+				const customOpenAiConfig = options.customOpenAiConfig ?? getCustomOpenAiConfig();
 				const translatedCues: Array<{ id: string; text: string }> = [];
 				for (const cue of textCues) {
-					const translated = await translateWithOpenAi(cue.text, targetLang, openAiKey);
+					const translated = await translateWithOpenAi(
+						cue.text,
+						targetLang,
+						openAiKey,
+						customOpenAiConfig,
+					);
 					translatedCues.push({ id: cue.id, text: translated });
 				}
 				return {
@@ -259,16 +308,36 @@ export async function translateTranscript(options: TranslateOptions): Promise<Tr
 
 			return {
 				success: false,
-				error: `Local NLLB-200 model (${quantization}) is not downloaded. Please download it in the Dubbing panel or use Cloud API mode.`,
+				error: `Local Model (${quantization}) is not downloaded. Please click Download in the Dubbing panel or use Cloud API mode.`,
 			};
 		}
 
-		// When local model is downloaded, process cues
-		// Note: we preserve cue structure
-		const translatedCues: Array<{ id: string; text: string }> = textCues.map((c) => ({
-			id: c.id,
-			text: `[${floresTarget}] ${c.text}`,
-		}));
+		// Run genuine local model inference with Transformers.js pipeline
+		const dtype = quantization === "fp16" ? "fp16" : "q8";
+		if (!activeTranslationPipeline || activeQuantization !== quantization) {
+			const { pipeline, env } = await import("@huggingface/transformers");
+			env.cacheDir = TRANSLATION_MODELS_DIR;
+			activeTranslationPipeline = await pipeline("translation", DEFAULT_NLLB_MODEL_ID, {
+				dtype,
+			});
+			activeQuantization = quantization;
+		}
+
+		const translatedCues: Array<{ id: string; text: string }> = [];
+		for (const cue of textCues) {
+			try {
+				const output = await activeTranslationPipeline(cue.text, {
+					src_lang: floresSource,
+					tgt_lang: floresTarget,
+				});
+				const translatedText =
+					output?.[0]?.translation_text?.trim() || output?.[0]?.text?.trim() || cue.text;
+				translatedCues.push({ id: cue.id, text: translatedText });
+			} catch (inferError) {
+				console.warn(`Local inference error on cue "${cue.text}":`, inferError);
+				translatedCues.push({ id: cue.id, text: cue.text });
+			}
+		}
 
 		return {
 			success: true,

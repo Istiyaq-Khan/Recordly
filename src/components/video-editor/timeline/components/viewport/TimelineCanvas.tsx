@@ -749,11 +749,28 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 					);
 				})}
 			</Row>
-			{showSourceAudioTrack &&
+			{(showSourceAudioTrack || sourceAudioTracks.length > 0) &&
 				sourceAudioTracks.map((track) => (
-					<Row key={track.id} id={`${SOURCE_AUDIO_ROW_ID}-${track.id}`}>
+					<Row
+						key={track.id}
+						id={`${SOURCE_AUDIO_ROW_ID}-${track.id}`}
+						label={
+							track.id === "system"
+								? "System Audio"
+								: track.id === "mic"
+									? "Microphone"
+									: track.label
+						}
+						labelColor={
+							track.id === "system"
+								? "#38bdf8"
+								: track.id === "mic"
+									? "#34d399"
+									: "#a78bfa"
+						}
+					>
 						{clipItems
-							.filter((item) => item.showSourceAudio)
+							.filter((item) => showSourceAudioTrack || item.showSourceAudio || sourceAudioTracks.length > 1)
 							.map((item) => {
 								const settings = getSourceAudioTrackSettingsForClip?.(item.id)?.[
 									track.id
@@ -764,7 +781,6 @@ const TimelineCanvasRows = memo(function TimelineCanvasRows({
 										id={`source-audio-${track.id}-${item.id}`}
 										rowId={`${SOURCE_AUDIO_ROW_ID}-${track.id}`}
 										span={liveSpanPreviewById?.[item.id] ?? item.span}
-										disabled
 										isSelected={item.id === selectedClipId}
 										onSelect={() => onSelectClip?.(item.id)}
 										variant="audio"

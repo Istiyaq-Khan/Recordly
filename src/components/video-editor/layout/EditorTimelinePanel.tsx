@@ -143,7 +143,10 @@ export function EditorTimelinePanel(props: Props) {
 				onAnnotationDelete={annotationCommands.handleAnnotationDelete}
 				selectedAnnotationId={timeline.selectedAnnotationId}
 				onSelectAnnotation={handleSelectAnnotation}
-				showSourceAudioTrack={timeline.clipRegions.some((clip) => clip.showSourceAudio)}
+				showSourceAudioTrack={
+					timeline.hasClipSourceAudio ||
+					timeline.clipRegions.some((clip) => clip.showSourceAudio)
+				}
 				sourceAudioResourceVersion={timeline.sourceAudioFallbackRefreshKey}
 				sourceAudioTrackSettings={audio.activeSourceAudioTrackSettings}
 				getSourceAudioTrackSettingsForClip={audio.getSourceAudioTrackSettingsForClip}

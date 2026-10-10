@@ -69,3 +69,14 @@ export function isSupportedDubbingLanguage(code: string): boolean {
 		(l) => l.code === normalized || l.floresCode.toLowerCase() === normalized,
 	);
 }
+
+export function resolveDeepLLanguageCode(languageCode: string): string {
+	const normalized = languageCode.trim().toLowerCase();
+	if (normalized === "en" || normalized === "en-us") return "EN-US";
+	if (normalized === "en-gb") return "EN-GB";
+	if (normalized === "pt-br") return "PT-BR";
+	if (normalized === "pt" || normalized === "pt-pt") return "PT-PT";
+	if (normalized === "zh" || normalized === "zh-cn" || normalized === "zh-hans") return "ZH-HANS";
+	if (normalized === "zh-tw" || normalized === "zh-hant") return "ZH-HANT";
+	return normalized.slice(0, 2).toUpperCase();
+}

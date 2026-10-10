@@ -761,6 +761,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		whisperExecutablePath?: string;
 		whisperModelPath: string;
 		language?: string;
+		audioSourceOption?: "mic-only" | "mic-plus-system";
 	}) => {
 		return ipcRenderer.invoke("generate-auto-captions", options);
 	},
@@ -799,6 +800,43 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		return () =>
 			ipcRenderer.removeListener("dubbing-translation-model-download-progress", listener);
 	},
+	getTtsModelStatus: (quantization?: "q4_k_m" | "q8_0" | "fp16") => {
+		return ipcRenderer.invoke("dubbing:get-tts-model-status", quantization);
+	},
+	downloadTtsModel: (quantization?: "q4_k_m" | "q8_0" | "fp16") => {
+		return ipcRenderer.invoke("dubbing:download-tts-model", quantization);
+	},
+	onTtsModelDownloadProgress: (
+		callback: (state: {
+			status: "idle" | "downloading" | "downloaded" | "error";
+			progress: number;
+			quantization: "q4_k_m" | "q8_0" | "fp16";
+			downloadedBytes?: number;
+			totalBytes?: number;
+			speed?: number;
+			eta?: number;
+			path?: string | null;
+			error?: string;
+		}) => void,
+	) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			payload: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				quantization: "q4_k_m" | "q8_0" | "fp16";
+				downloadedBytes?: number;
+				totalBytes?: number;
+				speed?: number;
+				eta?: number;
+				path?: string | null;
+				error?: string;
+			},
+		) => callback(payload);
+		ipcRenderer.on("dubbing-tts-model-download-progress", listener);
+		return () =>
+			ipcRenderer.removeListener("dubbing-tts-model-download-progress", listener);
+	},
 	extractVoiceReference: (options: {
 		videoPath: string;
 		startMs?: number;
@@ -815,6 +853,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		quantization?: "int8" | "fp16" | "fp32";
 		apiProvider?: "openai" | "deepl";
 		apiKey?: string;
+		customOpenAiConfig?: { apiKey?: string; baseUrl?: string; model?: string };
 	}) => {
 		return ipcRenderer.invoke("dubbing:translate", options);
 	},
@@ -834,6 +873,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		referenceAudioPath: string;
 		referenceTranscript: string;
 		targetLanguage?: string;
+		quantization?: "q4_k_m" | "q8_0" | "fp16";
 	}) => {
 		return ipcRenderer.invoke("dubbing:synthesize-local", options);
 	},
@@ -850,6 +890,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 	getDubbingApiKeys: () => {
 		return ipcRenderer.invoke("dubbing:get-api-keys");
+	},
+	saveCustomOpenAiConfig: (config: {
+		apiKey?: string;
+		baseUrl?: string;
+		model?: string;
+	}) => {
+		return ipcRenderer.invoke("dubbing:save-custom-openai-config", config);
 	},
 	setCurrentVideoPath: (
 		path: string,

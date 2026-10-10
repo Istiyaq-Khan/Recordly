@@ -4046,7 +4046,7 @@ export function buildNativeVideoAudioMuxArgs(
 	if (audioMode === "copy-source" && canCopyAudioCodecIntoMp4(options.audioSourceCodec)) {
 		args.push("-c:a", "copy");
 	} else {
-		args.push("-c:a", "aac", "-b:a", "192k");
+		args.push("-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-async", "1");
 	}
 	if (
 		typeof options.outputDurationSec === "number" &&

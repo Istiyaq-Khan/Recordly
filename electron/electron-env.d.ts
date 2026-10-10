@@ -722,6 +722,7 @@ interface Window {
 			whisperExecutablePath?: string;
 			whisperModelPath: string;
 			language?: string;
+			audioSourceOption?: "mic-only" | "mic-plus-system";
 		}) => Promise<{
 			success: boolean;
 			cues?: AutoCaptionCue[];
@@ -736,6 +737,10 @@ interface Window {
 			hasAceDataApiKey: boolean;
 			hasOpenAiApiKey: boolean;
 			hasDeepLApiKey: boolean;
+			customOpenAiConfig?: {
+				baseUrl: string | null;
+				model: string | null;
+			};
 		}>;
 		getDubbingSupportedLanguages: () => Promise<
 			Array<{ code: string; floresCode: string; name: string; nativeName: string }>
@@ -760,6 +765,31 @@ interface Window {
 				error?: string;
 			}) => void,
 		) => () => void;
+		getTtsModelStatus: (quantization?: "q4_k_m" | "q8_0" | "fp16") => Promise<{
+			success: boolean;
+			exists: boolean;
+			path: string | null;
+			quantization: string;
+			sizeBytes?: number;
+		}>;
+		downloadTtsModel: (quantization?: "q4_k_m" | "q8_0" | "fp16") => Promise<{
+			success: boolean;
+			path?: string;
+			error?: string;
+		}>;
+		onTtsModelDownloadProgress: (
+			callback: (state: {
+				status: "idle" | "downloading" | "downloaded" | "error";
+				progress: number;
+				quantization: "q4_k_m" | "q8_0" | "fp16";
+				downloadedBytes?: number;
+				totalBytes?: number;
+				speed?: number;
+				eta?: number;
+				path?: string | null;
+				error?: string;
+			}) => void,
+		) => () => void;
 		extractVoiceReference: (options: {
 			videoPath: string;
 			startMs?: number;
@@ -780,6 +810,7 @@ interface Window {
 			quantization?: "int8" | "fp16" | "fp32";
 			apiProvider?: "openai" | "deepl";
 			apiKey?: string;
+			customOpenAiConfig?: { apiKey?: string; baseUrl?: string; model?: string };
 		}) => Promise<{
 			success: boolean;
 			translatedCues?: Array<{ id: string; text: string }>;
@@ -805,6 +836,7 @@ interface Window {
 			referenceAudioPath: string;
 			referenceTranscript: string;
 			targetLanguage?: string;
+			quantization?: "q4_k_m" | "q8_0" | "fp16";
 		}) => Promise<{
 			success: boolean;
 			dubbedAudioPath?: string;
@@ -823,6 +855,11 @@ interface Window {
 		}>;
 		saveDubbingApiKey: (payload: { provider: string; key: string }) => Promise<{ success: boolean; error?: string }>;
 		getDubbingApiKeys: () => Promise<Record<string, boolean>>;
+		saveCustomOpenAiConfig: (config: {
+			apiKey?: string;
+			baseUrl?: string;
+			model?: string;
+		}) => Promise<{ success: boolean; error?: string }>;
 		setCurrentVideoPath: (
 			path: string,
 			options?: {

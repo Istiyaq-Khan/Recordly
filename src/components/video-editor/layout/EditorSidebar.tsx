@@ -40,7 +40,7 @@ export function EditorSidebar({
 	const advanced = advancedSections[activeSection] ?? false;
 	const hasAdvanced =
 		!settingsPanelProps.selectedAnnotationId &&
-		["scene", "frame", "crop", "cursor", "webcam", "captions", "settings", "zoom", "dubbing"].includes(
+		["scene", "frame", "crop", "cursor", "webcam", "captions", "settings", "zoom"].includes(
 			activeSection,
 		);
 	const sections = useMemo(

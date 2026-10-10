@@ -155,45 +155,48 @@ export function useAutoCaptionController({
 		setWhisperModelPath,
 	]);
 
-	const handleGenerateAutoCaptions = useCallback(async () => {
-		if (captionGenerationInFlightRef.current || isGeneratingCaptions) return;
-		captionGenerationInFlightRef.current = true;
-		setIsGeneratingCaptions(true);
-		try {
-			if (!whisperModelPath) {
-				toast.error("Select a Whisper model or download the small model first");
-				return;
-			}
-			let sourcePath = resolveAutoCaptionSourcePath({ videoSourcePath, videoPath });
-			if (!sourcePath) {
-				const sessionResult = await window.electronAPI.getCurrentRecordingSession?.();
-				const currentVideoResult = await window.electronAPI.getCurrentVideoPath();
-				sourcePath = resolveAutoCaptionSourcePath({
-					recordingSessionVideoPath:
-						sessionResult?.success && sessionResult.session?.videoPath
-							? sessionResult.session.videoPath
+	const handleGenerateAutoCaptions = useCallback(
+		async (audioSourceOverride?: "mic-only" | "mic-plus-system") => {
+			if (captionGenerationInFlightRef.current || isGeneratingCaptions) return;
+			captionGenerationInFlightRef.current = true;
+			setIsGeneratingCaptions(true);
+			try {
+				if (!whisperModelPath) {
+					toast.error("Select a Whisper model or download the small model first");
+					return;
+				}
+				let sourcePath = resolveAutoCaptionSourcePath({ videoSourcePath, videoPath });
+				if (!sourcePath) {
+					const sessionResult = await window.electronAPI.getCurrentRecordingSession?.();
+					const currentVideoResult = await window.electronAPI.getCurrentVideoPath();
+					sourcePath = resolveAutoCaptionSourcePath({
+						recordingSessionVideoPath:
+							sessionResult?.success && sessionResult.session?.videoPath
+								? sessionResult.session.videoPath
+								: null,
+						currentVideoPath: currentVideoResult.success
+							? (currentVideoResult.path ?? null)
 							: null,
-					currentVideoPath: currentVideoResult.success
-						? (currentVideoResult.path ?? null)
-						: null,
+					});
+				}
+				if (!sourcePath) {
+					toast.error("No source video is loaded");
+					return;
+				}
+				// Refreshing an unchanged session revokes active companion-audio URLs.
+				if (sourcePath !== videoSourcePath) {
+					await syncActiveVideoSource(sourcePath, webcamSourcePath);
+					setVideoSourcePath(sourcePath);
+					setVideoPath(await resolveVideoUrl(sourcePath));
+				}
+				const result = await window.electronAPI.generateAutoCaptions({
+					videoPath: sourcePath,
+					whisperExecutablePath: whisperExecutablePath ?? undefined,
+					whisperModelPath,
+					language: autoCaptionSettings.language,
+					audioSourceOption:
+						audioSourceOverride ?? autoCaptionSettings.audioSourceOption ?? "mic-only",
 				});
-			}
-			if (!sourcePath) {
-				toast.error("No source video is loaded");
-				return;
-			}
-			// Refreshing an unchanged session revokes active companion-audio URLs.
-			if (sourcePath !== videoSourcePath) {
-				await syncActiveVideoSource(sourcePath, webcamSourcePath);
-				setVideoSourcePath(sourcePath);
-				setVideoPath(await resolveVideoUrl(sourcePath));
-			}
-			const result = await window.electronAPI.generateAutoCaptions({
-				videoPath: sourcePath,
-				whisperExecutablePath: whisperExecutablePath ?? undefined,
-				whisperModelPath,
-				language: autoCaptionSettings.language,
-			});
 			if (resolveAutoCaptionSourcePath(activeSourceRef.current) !== sourcePath) {
 				toast.info("Recording changed; generated captions were not applied.");
 				return;

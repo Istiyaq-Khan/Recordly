@@ -589,6 +589,7 @@ export interface AutoCaptionSettings {
 	/** Show the hover ghost on the timeline caption track for click-to-add. */
 	timelineQuickAdd: boolean;
 	language: string;
+	audioSourceOption?: "mic-only" | "mic-plus-system";
 	fontFamily: string;
 	fontSize: number;
 	bottomOffset: number;
@@ -605,6 +606,7 @@ export const DEFAULT_AUTO_CAPTION_SETTINGS: AutoCaptionSettings = {
 	enabled: false,
 	timelineQuickAdd: true,
 	language: "auto",
+	audioSourceOption: "mic-only",
 	fontFamily: getDefaultCaptionFontFamily(),
 	fontSize: 30,
 	bottomOffset: 3,
