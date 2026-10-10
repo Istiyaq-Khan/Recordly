@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 import { alignDubbedCaptions } from "../dubbing/captionAlignment";
 import {
+	cancelTtsModelDownload,
 	checkLocalDubbingEngineStatus,
 	downloadTtsModelWithProgress,
 	getTtsModelStatus,
@@ -113,6 +114,15 @@ export function registerDubbingHandlers() {
 			}
 		},
 	);
+
+	ipcMain.handle("dubbing:cancel-tts-model-download", async () => {
+		try {
+			return await cancelTtsModelDownload();
+		} catch (error) {
+			console.error("Failed to cancel Fish Audio TTS model download:", error);
+			return { success: false, error: String(error) };
+		}
+	});
 
 	ipcMain.handle(
 		"dubbing:extract-voice-reference",

@@ -16,8 +16,10 @@ vi.mock("./storage", () => ({
 }));
 
 import {
+	cancelTtsModelDownload,
 	checkLocalDubbingEngineStatus,
 	FISH_TTS_MODEL_CONFIGS,
+	FISH_TTS_TOKENIZER_CONFIG,
 	getTtsModelPath,
 	getTtsModelStatus,
 	synthesizeAudioWithApi,
@@ -36,14 +38,27 @@ describe("Fish Audio S2-Pro Engine", () => {
 		globalThis.fetch = originalFetch;
 	});
 
-	it("defines valid Hugging Face configs for all quantization levels", () => {
-		expect(FISH_TTS_MODEL_CONFIGS.q4_k_m.url).toContain("huggingface.co");
-		expect(FISH_TTS_MODEL_CONFIGS.q8_0.url).toContain("huggingface.co");
-		expect(FISH_TTS_MODEL_CONFIGS.fp16.url).toContain("huggingface.co");
+	it("defines valid rodrigomt/s2-pro-gguf Hugging Face configs for all quantization levels and full model", () => {
+		expect(FISH_TTS_MODEL_CONFIGS.q4_k_m.url).toContain("rodrigomt/s2-pro-gguf");
+		expect(FISH_TTS_MODEL_CONFIGS.q5_k_m.url).toContain("rodrigomt/s2-pro-gguf");
+		expect(FISH_TTS_MODEL_CONFIGS.q6_k.url).toContain("rodrigomt/s2-pro-gguf");
+		expect(FISH_TTS_MODEL_CONFIGS.q8_0.url).toContain("rodrigomt/s2-pro-gguf");
+		expect(FISH_TTS_MODEL_CONFIGS.f16.url).toContain("rodrigomt/s2-pro-gguf");
 
-		expect(getTtsModelPath("q4_k_m")).toContain("q4_k_m.gguf");
-		expect(getTtsModelPath("q8_0")).toContain("q8_0.gguf");
-		expect(getTtsModelPath("fp16")).toContain("fp16.gguf");
+		expect(getTtsModelPath("q4_k_m")).toContain("s2-pro-q4_k_m.gguf");
+		expect(getTtsModelPath("q5_k_m")).toContain("s2-pro-q5_k_m.gguf");
+		expect(getTtsModelPath("q6_k")).toContain("s2-pro-q6_k.gguf");
+		expect(getTtsModelPath("q8_0")).toContain("s2-pro-q8_0.gguf");
+		expect(getTtsModelPath("f16")).toContain("s2-pro-f16.gguf");
+
+		expect(FISH_TTS_TOKENIZER_CONFIG.url).toContain("rodrigomt/s2-pro-gguf/resolve/main/tokenizer.json");
+		expect(FISH_TTS_TOKENIZER_CONFIG.filename).toBe("tokenizer.json");
+	});
+
+	it("handles cancellation cleanly when no download is active", async () => {
+		const res = await cancelTtsModelDownload();
+		expect(res.success).toBe(true);
+		expect(res.canceled).toBe(false);
 	});
 
 	it("returns model status indicating existence state", async () => {

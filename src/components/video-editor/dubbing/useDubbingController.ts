@@ -121,6 +121,8 @@ export function useDubbingController({
 				path?: string | null;
 				isDownloading: boolean;
 				progress: number;
+				downloadedBytes?: number;
+				totalBytes?: number;
 				speed?: number;
 				eta?: number;
 				error?: string;
@@ -128,7 +130,10 @@ export function useDubbingController({
 		>
 	>({
 		q4_k_m: { exists: false, isDownloading: false, progress: 0 },
+		q5_k_m: { exists: false, isDownloading: false, progress: 0 },
+		q6_k: { exists: false, isDownloading: false, progress: 0 },
 		q8_0: { exists: false, isDownloading: false, progress: 0 },
+		f16: { exists: false, isDownloading: false, progress: 0 },
 		fp16: { exists: false, isDownloading: false, progress: 0 },
 	});
 
@@ -349,6 +354,34 @@ export function useDubbingController({
 		}
 	}, []);
 
+	// Cancel Fish Audio S2-Pro TTS model download
+	const handleCancelTtsModelDownload = useCallback(async () => {
+		if (!window.electronAPI?.cancelTtsModelDownload) return;
+		try {
+			const res = await window.electronAPI.cancelTtsModelDownload();
+			if (res.success) {
+				setTtsModelStatusByQuantization((prev) => {
+					const updated = { ...prev };
+					for (const key of Object.keys(updated) as TtsQuantization[]) {
+						if (updated[key]?.isDownloading) {
+							updated[key] = {
+								...updated[key],
+								isDownloading: false,
+								progress: 0,
+								speed: undefined,
+								eta: undefined,
+							};
+						}
+					}
+					return updated;
+				});
+				toast.info("Model download canceled");
+			}
+		} catch (err) {
+			console.error("[useDubbingController] Failed to cancel TTS model download:", err);
+		}
+	}, []);
+
 	// Download model for a specific quantization
 	const handleDownloadModel = useCallback(async (quant: DubbingModelQuantization) => {
 		if (!window.electronAPI?.downloadTranslationModel) return;
@@ -539,8 +572,10 @@ export function useDubbingController({
 		void checkModelStatus("fp16");
 		void checkModelStatus("fp32");
 		void checkTtsModelStatus("q4_k_m");
+		void checkTtsModelStatus("q5_k_m");
+		void checkTtsModelStatus("q6_k");
 		void checkTtsModelStatus("q8_0");
-		void checkTtsModelStatus("fp16");
+		void checkTtsModelStatus("f16");
 	}, [refreshApiKeys, checkModelStatus, checkTtsModelStatus]);
 
 	// Listen to TTS download progress
@@ -556,6 +591,8 @@ export function useDubbingController({
 					path: state.path ?? null,
 					isDownloading: state.status === "downloading",
 					progress: state.progress,
+					downloadedBytes: state.downloadedBytes,
+					totalBytes: state.totalBytes,
 					speed: state.speed,
 					eta: state.eta,
 					error: state.error,
@@ -860,6 +897,7 @@ export function useDubbingController({
 		updateTtsQuantization,
 		ttsModelStatusByQuantization,
 		handleDownloadTtsModel,
+		handleCancelTtsModelDownload,
 		checkTtsModelStatus,
 
 		// Voice Sample

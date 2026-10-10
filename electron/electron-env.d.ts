@@ -765,23 +765,32 @@ interface Window {
 				error?: string;
 			}) => void,
 		) => () => void;
-		getTtsModelStatus: (quantization?: "q4_k_m" | "q8_0" | "fp16") => Promise<{
+		getTtsModelStatus: (
+			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16",
+		) => Promise<{
 			success: boolean;
 			exists: boolean;
 			path: string | null;
 			quantization: string;
 			sizeBytes?: number;
 		}>;
-		downloadTtsModel: (quantization?: "q4_k_m" | "q8_0" | "fp16") => Promise<{
+		downloadTtsModel: (
+			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16",
+		) => Promise<{
 			success: boolean;
 			path?: string;
+			error?: string;
+		}>;
+		cancelTtsModelDownload: () => Promise<{
+			success: boolean;
+			canceled?: boolean;
 			error?: string;
 		}>;
 		onTtsModelDownloadProgress: (
 			callback: (state: {
 				status: "idle" | "downloading" | "downloaded" | "error";
 				progress: number;
-				quantization: "q4_k_m" | "q8_0" | "fp16";
+				quantization: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
 				downloadedBytes?: number;
 				totalBytes?: number;
 				speed?: number;
@@ -875,7 +884,7 @@ interface Window {
 			referenceAudioPath: string;
 			referenceTranscript: string;
 			targetLanguage?: string;
-			quantization?: "q4_k_m" | "q8_0" | "fp16";
+			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
 		}) => Promise<{
 			success: boolean;
 			dubbedAudioPath?: string;

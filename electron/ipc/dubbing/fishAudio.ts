@@ -22,24 +22,68 @@ export const FISH_TTS_MODEL_CONFIGS: Record<
 	{ filename: string; url: string; sizeBytes: number; name: string }
 > = {
 	q4_k_m: {
-		filename: "fish-speech-s2-pro-q4_k_m.gguf",
-		url: "https://huggingface.co/fishaudio/fish-speech-1.5/resolve/main/model-q4_k_m.gguf",
-		sizeBytes: 1_250_000_000,
-		name: "INT4 (Q4_K_M) Compact",
+		filename: "s2-pro-q4_k_m.gguf",
+		url: "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-q4_k_m.gguf",
+		sizeBytes: 3_566_165_088,
+		name: "INT4 (Q4_K_M) Fastest",
+	},
+	q5_k_m: {
+		filename: "s2-pro-q5_k_m.gguf",
+		url: "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-q5_k_m.gguf",
+		sizeBytes: 4_031_183_968,
+		name: "Q5_K_M Balanced",
+	},
+	q6_k: {
+		filename: "s2-pro-q6_k.gguf",
+		url: "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-q6_k.gguf",
+		sizeBytes: 4_525_266_528,
+		name: "Q6_K High Quality",
 	},
 	q8_0: {
-		filename: "fish-speech-s2-pro-q8_0.gguf",
-		url: "https://huggingface.co/fishaudio/fish-speech-1.5/resolve/main/model-q8_0.gguf",
-		sizeBytes: 2_150_000_000,
-		name: "INT8 (Q8_0) Balanced",
+		filename: "s2-pro-q8_0.gguf",
+		url: "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-q8_0.gguf",
+		sizeBytes: 5_630_037_088,
+		name: "INT8 (Q8_0) Near-Lossless",
+	},
+	f16: {
+		filename: "s2-pro-f16.gguf",
+		url: "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-f16.gguf",
+		sizeBytes: 9_906_568_704,
+		name: "FP16 (Full Model) Reference Master",
 	},
 	fp16: {
-		filename: "fish-speech-s2-pro-fp16.gguf",
-		url: "https://huggingface.co/fishaudio/fish-speech-1.5/resolve/main/model-fp16.gguf",
-		sizeBytes: 4_250_000_000,
-		name: "FP16 Full Precision",
+		filename: "s2-pro-f16.gguf",
+		url: "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/s2-pro-f16.gguf",
+		sizeBytes: 9_906_568_704,
+		name: "FP16 (Full Model) Reference Master",
 	},
 };
+
+export const FISH_TTS_TOKENIZER_CONFIG = {
+	filename: "tokenizer.json",
+	url: "https://huggingface.co/rodrigomt/s2-pro-gguf/resolve/main/tokenizer.json",
+	sizeBytes: 12_217_872,
+	name: "S2-Pro Tokenizer",
+};
+
+let activeTtsDownloadRequest: import("node:http").ClientRequest | null = null;
+let activeTtsDownloadTempPath: string | null = null;
+let isTtsDownloadCancelled = false;
+
+export async function cancelTtsModelDownload(): Promise<{ success: boolean; canceled: boolean }> {
+	if (activeTtsDownloadRequest) {
+		isTtsDownloadCancelled = true;
+		activeTtsDownloadRequest.destroy(new Error("Download canceled by user"));
+		activeTtsDownloadRequest = null;
+		if (activeTtsDownloadTempPath) {
+			const toRemove = activeTtsDownloadTempPath;
+			activeTtsDownloadTempPath = null;
+			await fs.rm(toRemove, { force: true }).catch(() => undefined);
+		}
+		return { success: true, canceled: true };
+	}
+	return { success: true, canceled: false };
+}
 
 export function getTtsModelPath(quantization: TtsQuantization = "q4_k_m"): string {
 	const config = FISH_TTS_MODEL_CONFIGS[quantization] ?? FISH_TTS_MODEL_CONFIGS.q4_k_m;
@@ -88,6 +132,64 @@ export function sendTtsModelDownloadProgress(
 	}
 }
 
+export async function ensureTtsTokenizerDownloaded(): Promise<string | null> {
+	await fs.mkdir(DUBBING_MODELS_DIR, { recursive: true });
+	const targetPath = path.join(DUBBING_MODELS_DIR, FISH_TTS_TOKENIZER_CONFIG.filename);
+	try {
+		const stat = await fs.stat(targetPath);
+		if (stat.size > 0) {
+			return targetPath;
+		}
+	} catch {
+		// Does not exist, download below
+	}
+
+	const tempPath = `${targetPath}.download`;
+	try {
+		await fs.rm(tempPath, { force: true }).catch(() => undefined);
+		await new Promise<void>((resolve, reject) => {
+			const fetchStream = (currentUrl: string, redirects = 0) => {
+				const req = httpsGet(currentUrl, { timeout: 45_000 }, (res) => {
+					const code = res.statusCode ?? 0;
+					const location = res.headers.location;
+					if (code >= 300 && code < 400 && location) {
+						res.resume();
+						if (redirects >= 5) {
+							reject(new Error("Too many redirects downloading tokenizer.json"));
+							return;
+						}
+						const nextUrl = new URL(location, currentUrl).toString();
+						fetchStream(nextUrl, redirects + 1);
+						return;
+					}
+					if (code < 200 || code >= 300) {
+						res.resume();
+						reject(new Error(`Tokenizer download failed with status ${code}`));
+						return;
+					}
+					const fileStream = createWriteStream(tempPath);
+					res.on("error", (err) => fileStream.destroy(err));
+					fileStream.on("error", (err) => {
+						res.destroy(err);
+						reject(err);
+					});
+					fileStream.on("finish", () => resolve());
+					res.pipe(fileStream);
+				});
+				req.on("error", reject);
+				req.on("timeout", () => req.destroy(new Error("Tokenizer download timed out")));
+			};
+			fetchStream(FISH_TTS_TOKENIZER_CONFIG.url);
+		});
+		await fs.rename(tempPath, targetPath);
+		return targetPath;
+	} catch (err) {
+		await fs.rm(tempPath, { force: true }).catch(() => undefined);
+		console.warn("Failed to auto-download S2-Pro tokenizer:", err);
+		return null;
+	}
+}
+
 export async function downloadTtsModelWithProgress(
 	webContents: Electron.WebContents,
 	quantization: TtsQuantization = "q4_k_m",
@@ -96,6 +198,9 @@ export async function downloadTtsModelWithProgress(
 	const config = FISH_TTS_MODEL_CONFIGS[quantization] ?? FISH_TTS_MODEL_CONFIGS.q4_k_m;
 	const finalPath = getTtsModelPath(quantization);
 	const tempPath = `${finalPath}.download`;
+
+	isTtsDownloadCancelled = false;
+	activeTtsDownloadTempPath = tempPath;
 
 	sendTtsModelDownloadProgress(webContents, {
 		status: "downloading",
@@ -114,7 +219,7 @@ export async function downloadTtsModelWithProgress(
 
 		const downloadStream = (currentUrl: string, redirectCount = 0): Promise<void> => {
 			return new Promise((resolve, reject) => {
-				const req = httpsGet(currentUrl, { timeout: 45_000 }, (response) => {
+				const req = httpsGet(currentUrl, { timeout: 60_000 }, (response) => {
 					const statusCode = response.statusCode ?? 0;
 					const location = response.headers.location;
 
@@ -181,7 +286,16 @@ export async function downloadTtsModelWithProgress(
 					response.pipe(fileStream);
 				});
 
-				req.on("error", reject);
+				activeTtsDownloadRequest = req;
+
+				req.on("error", (err) => {
+					if (isTtsDownloadCancelled) {
+						resolve();
+					} else {
+						reject(err);
+					}
+				});
+
 				req.on("timeout", () => {
 					req.destroy(new Error("Download connection timed out."));
 				});
@@ -189,7 +303,26 @@ export async function downloadTtsModelWithProgress(
 		};
 
 		await downloadStream(config.url);
+
+		if (isTtsDownloadCancelled) {
+			await fs.rm(tempPath, { force: true }).catch(() => undefined);
+			activeTtsDownloadRequest = null;
+			activeTtsDownloadTempPath = null;
+			sendTtsModelDownloadProgress(webContents, {
+				status: "idle",
+				progress: 0,
+				quantization,
+				path: null,
+			});
+			return "";
+		}
+
 		await fs.rename(tempPath, finalPath);
+		activeTtsDownloadRequest = null;
+		activeTtsDownloadTempPath = null;
+
+		// Ensure tokenizer.json is also downloaded alongside model
+		void ensureTtsTokenizerDownloaded().catch(() => undefined);
 
 		sendTtsModelDownloadProgress(webContents, {
 			status: "downloaded",
@@ -203,6 +336,19 @@ export async function downloadTtsModelWithProgress(
 		return finalPath;
 	} catch (error) {
 		await fs.rm(tempPath, { force: true }).catch(() => undefined);
+		activeTtsDownloadRequest = null;
+		activeTtsDownloadTempPath = null;
+
+		if (isTtsDownloadCancelled) {
+			sendTtsModelDownloadProgress(webContents, {
+				status: "idle",
+				progress: 0,
+				quantization,
+				path: null,
+			});
+			return "";
+		}
+
 		const errStr = error instanceof Error ? error.message : String(error);
 		sendTtsModelDownloadProgress(webContents, {
 			status: "error",
@@ -214,6 +360,7 @@ export async function downloadTtsModelWithProgress(
 		throw error;
 	}
 }
+
 
 export async function probeAudioDurationMs(filePath: string): Promise<number> {
 	try {

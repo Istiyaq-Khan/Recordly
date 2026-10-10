@@ -83,13 +83,14 @@ export const QUANTIZATION_OPTIONS: QuantizationOptionConfig[] = [
 	},
 ];
 
-export type TtsQuantization = "q4_k_m" | "q8_0" | "fp16";
+export type TtsQuantization = "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
 
 export interface TtsQuantizationOptionConfig {
 	id: TtsQuantization;
 	name: string;
 	badge: string;
 	size: string;
+	sizeBytes: number;
 	description: string;
 	recommendedRam: string;
 }
@@ -98,25 +99,47 @@ export const TTS_QUANTIZATION_OPTIONS: TtsQuantizationOptionConfig[] = [
 	{
 		id: "q4_k_m",
 		name: "INT4 (Q4_K_M)",
-		badge: "Fast & Compact",
-		size: "~1.2 GB",
-		description: "Lightweight 4-bit quantization. Fast inference on CPU/integrated GPU.",
-		recommendedRam: "8GB+ RAM",
+		badge: "Fastest",
+		size: "3.6 GB",
+		sizeBytes: 3_566_165_088,
+		description: "Lightweight 4-bit quantization. Fast inference on CPU and standard hardware with lowest VRAM usage.",
+		recommendedRam: "8 GB+ RAM / CPU",
+	},
+	{
+		id: "q5_k_m",
+		name: "Q5_K_M",
+		badge: "Balanced (Recommended)",
+		size: "4.0 GB",
+		sizeBytes: 4_031_183_968,
+		description: "5-bit medium quantization. Optimal balance between speech expressiveness, timbre accuracy, and latency.",
+		recommendedRam: "12 GB+ RAM / 4 GB VRAM",
+	},
+	{
+		id: "q6_k",
+		name: "Q6_K",
+		badge: "High Quality",
+		size: "4.5 GB",
+		sizeBytes: 4_525_266_528,
+		description: "6-bit quantization. Superior voice inflection fidelity and tone nuance for modern GPUs.",
+		recommendedRam: "14 GB+ RAM / 6 GB VRAM",
 	},
 	{
 		id: "q8_0",
 		name: "INT8 (Q8_0)",
-		badge: "Balanced (Recommended)",
-		size: "~2.1 GB",
-		description: "Near full-precision voice timbre preservation with 8-bit quantized weights.",
-		recommendedRam: "16GB+ RAM",
+		badge: "Near-Lossless",
+		size: "5.6 GB",
+		sizeBytes: 5_630_037_088,
+		description: "Near full-precision 8-bit weights. Preserves fine vocal nuances, emotional inflection, and studio polish.",
+		recommendedRam: "16 GB+ RAM / 8 GB VRAM",
 	},
 	{
-		id: "fp16",
-		name: "FP16 Full Precision",
-		badge: "Studio Master",
-		size: "~4.2 GB",
-		description: "Uncompromised acoustic studio fidelity for dedicated GPU setups.",
-		recommendedRam: "24GB+ RAM / GPU",
+		id: "f16",
+		name: "FP16 (Full Model)",
+		badge: "Reference Master",
+		size: "9.9 GB",
+		sizeBytes: 9_906_568_704,
+		description: "Uncompromised 16-bit unquantized studio master weights. Maximum acoustic fidelity for high-end GPUs.",
+		recommendedRam: "24 GB+ RAM / 12 GB+ VRAM",
 	},
 ];
+

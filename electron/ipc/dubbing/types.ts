@@ -14,7 +14,7 @@ export interface DubbingLanguage {
 	nativeName: string; // Native name (e.g., "Español")
 }
 
-export type TtsQuantization = "q4_k_m" | "q8_0" | "fp16";
+export type TtsQuantization = "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
 
 export interface DubbingStatus {
 	localModelReady: boolean;
