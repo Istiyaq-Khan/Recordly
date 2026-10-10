@@ -38,6 +38,22 @@ vi.mock("../dubbing/referenceAudio", () => ({
 		durationMs: 6000,
 		suggestedTranscript: "Test speech transcript",
 	}),
+	importVoiceReferenceFile: vi.fn().mockResolvedValue({
+		success: true,
+		referenceAudioPath: "/out/upload.wav",
+		durationMs: 7000,
+		suggestedTranscript: "Uploaded sample transcript",
+	}),
+	saveLiveVoiceReference: vi.fn().mockResolvedValue({
+		success: true,
+		referenceAudioPath: "/out/recorded.wav",
+		durationMs: 8000,
+		suggestedTranscript: "Recorded sample transcript",
+	}),
+	transcribeVoiceReferenceSample: vi.fn().mockResolvedValue({
+		success: true,
+		transcript: "Re-transcribed sample transcript",
+	}),
 }));
 
 vi.mock("../dubbing/translation", () => ({
@@ -114,6 +130,35 @@ describe("Dubbing IPC Handlers", () => {
 		expect(res.success).toBe(true);
 		expect(res.referenceAudioPath).toBe("/out/sample.wav");
 		expect(res.suggestedTranscript).toBe("Test speech transcript");
+	});
+
+	it("handles voice reference file import", async () => {
+		const handler = handlers.get("dubbing:import-voice-reference-file")!;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, {
+			filePath: "/input/voice.wav",
+		})) as Record<string, unknown>;
+		expect(res.success).toBe(true);
+		expect(res.referenceAudioPath).toBe("/out/upload.wav");
+		expect(res.suggestedTranscript).toBe("Uploaded sample transcript");
+	});
+
+	it("handles live voice reference recording buffer", async () => {
+		const handler = handlers.get("dubbing:save-live-voice-reference")!;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, {
+			audioBuffer: new Uint8Array([1, 2, 3]),
+		})) as Record<string, unknown>;
+		expect(res.success).toBe(true);
+		expect(res.referenceAudioPath).toBe("/out/recorded.wav");
+		expect(res.suggestedTranscript).toBe("Recorded sample transcript");
+	});
+
+	it("handles on-demand audio sample transcription", async () => {
+		const handler = handlers.get("dubbing:transcribe-sample")!;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, {
+			audioPath: "/cache/sample.wav",
+		})) as Record<string, unknown>;
+		expect(res.success).toBe(true);
+		expect(res.transcript).toBe("Re-transcribed sample transcript");
 	});
 
 	it("handles text translation via NLLB or API", async () => {

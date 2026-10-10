@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { app } from "electron";
+import { WHISPER_SMALL_MODEL_PATH } from "../constants";
 import { getFfmpegBinaryPath } from "../ffmpeg/binary";
 import { getBundledWhisperExecutableCandidates } from "../paths/binaries";
 import { resolveRecordingSession } from "../project/session";
@@ -136,6 +137,7 @@ export async function resolveWhisperExecutablePath(preferredPath?: string | null
 }
 
 export async function resolveCaptionAudioCandidates(videoPath: string) {
+	const normalizedVideoPath = normalizeVideoSourcePath(videoPath) ?? videoPath;
 	const candidates: Array<{ path: string; label: string }> = [];
 	const seenPaths = new Set<string>();
 
@@ -149,19 +151,19 @@ export async function resolveCaptionAudioCandidates(videoPath: string) {
 		candidates.push({ path: normalizedCandidatePath, label });
 	};
 
-	const companionAudio = await getUsableCompanionAudioCandidates(videoPath);
+	const companionAudio = await getUsableCompanionAudioCandidates(normalizedVideoPath);
 	const companions = getCaptionCompanionAudioCandidates(companionAudio);
 	for (const candidate of companions.filter(
 		(candidate) => candidate.label === "microphone audio sidecar",
 	)) {
 		pushCandidate(candidate.path, candidate.label);
 	}
-	pushCandidate(videoPath, "recording");
+	pushCandidate(normalizedVideoPath, "recording");
 	for (const candidate of companions) {
 		pushCandidate(candidate.path, candidate.label);
 	}
 
-	const requestedRecordingSession = await resolveRecordingSession(videoPath);
+	const requestedRecordingSession = await resolveRecordingSession(normalizedVideoPath);
 	pushCandidate(requestedRecordingSession?.webcamPath, "linked webcam recording");
 
 	return candidates;
@@ -400,4 +402,65 @@ export async function generateAutoCaptionsFromVideo(options: {
 		cues: mergeCaptionSources(micCues ?? [], systemCues ?? []),
 		audioSourceLabel: "microphone and system audio",
 	};
+}
+
+export async function transcribeAudioFile(options: {
+	audioPath: string;
+	whisperExecutablePath?: string | null;
+	whisperModelPath?: string | null;
+	language?: string;
+}): Promise<string> {
+	const whisperExecutablePath = await resolveWhisperExecutablePath(options.whisperExecutablePath ?? undefined);
+	const rawModelPath = options.whisperModelPath?.trim() || WHISPER_SMALL_MODEL_PATH;
+	const whisperModelPath = path.resolve(rawModelPath);
+	await ensureReadableFile(whisperExecutablePath, { executable: true });
+	await ensureReadableFile(whisperModelPath);
+
+	const tempBase = path.join(
+		app.getPath("temp"),
+		`recordly-sample-transcribe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+	);
+	const outputBase = `${tempBase}-whisper`;
+	const srtPath = `${outputBase}.srt`;
+	const jsonPath = `${outputBase}.json`;
+
+	try {
+		const language = options.language && options.language.trim() ? options.language.trim() : "auto";
+		const whisperBaseArgs = [
+			"-m",
+			whisperModelPath,
+			"-f",
+			path.resolve(options.audioPath),
+			"-osrt",
+			"-of",
+			outputBase,
+			"-l",
+			language,
+			"-np",
+			"-mc",
+			"0",
+		];
+
+		let jsonEnabled = true;
+		try {
+			await executeWhisper(whisperExecutablePath, [...whisperBaseArgs, "-ojf"]);
+		} catch (error) {
+			if (!shouldRetryWhisperWithoutJson(error)) {
+				throw error;
+			}
+			jsonEnabled = false;
+			await executeWhisper(whisperExecutablePath, whisperBaseArgs);
+		}
+
+		const cues = await readWhisperCaptionOutput(outputBase, jsonEnabled);
+		return cues
+			.map((cue) => cue.text.trim())
+			.filter(Boolean)
+			.join(" ");
+	} finally {
+		await Promise.allSettled([
+			fs.rm(srtPath, { force: true }),
+			fs.rm(jsonPath, { force: true }),
+		]);
+	}
 }

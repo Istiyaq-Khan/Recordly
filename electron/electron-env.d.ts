@@ -791,7 +791,8 @@ interface Window {
 			}) => void,
 		) => () => void;
 		extractVoiceReference: (options: {
-			videoPath: string;
+			videoPath?: string;
+			audioPath?: string;
 			startMs?: number;
 			durationMs?: number;
 			existingCues?: any[];
@@ -800,6 +801,44 @@ interface Window {
 			referenceAudioPath?: string;
 			durationMs?: number;
 			suggestedTranscript?: string;
+			sourceType?: "timeline" | "upload" | "record";
+			error?: string;
+		}>;
+		importVoiceReferenceFile: (options?: {
+			filePath?: string;
+			whisperExecutablePath?: string | null;
+			whisperModelPath?: string | null;
+		}) => Promise<{
+			success: boolean;
+			referenceAudioPath?: string;
+			durationMs?: number;
+			suggestedTranscript?: string;
+			sourceType?: "timeline" | "upload" | "record";
+			error?: string;
+			canceled?: boolean;
+		}>;
+		saveLiveVoiceReference: (options: {
+			audioBuffer: Uint8Array | ArrayBuffer | number[] | string;
+			mimeType?: string;
+			promptText?: string;
+			whisperExecutablePath?: string | null;
+			whisperModelPath?: string | null;
+		}) => Promise<{
+			success: boolean;
+			referenceAudioPath?: string;
+			durationMs?: number;
+			suggestedTranscript?: string;
+			sourceType?: "timeline" | "upload" | "record";
+			error?: string;
+		}>;
+		transcribeAudioSample: (options: {
+			audioPath: string;
+			whisperExecutablePath?: string | null;
+			whisperModelPath?: string | null;
+			language?: string;
+		}) => Promise<{
+			success: boolean;
+			transcript?: string;
 			error?: string;
 		}>;
 		translateTranscript: (options: {

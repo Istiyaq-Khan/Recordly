@@ -2,6 +2,13 @@ import { Button, Card, Label, ProgressBar, Radio, RadioGroup } from "@heroui/rea
 import { useEffect, useState } from "react";
 import { ChoiceGroup, ChoiceItem } from "@/components/ui/choice-group";
 import {
+	ArrowClockwise,
+	MicrophoneIcon,
+	Scissors,
+	Trash,
+	UploadSimple,
+} from "@/components/ui/icons";
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -26,6 +33,10 @@ import {
 	type TtsQuantization,
 } from "./constants";
 import type { useDubbingController } from "./useDubbingController";
+import { useVoiceRecorder } from "./useVoiceRecorder";
+
+const DEFAULT_PROMPT_SCRIPT =
+	"Recordly makes screen recording effortless and professional. I am recording this clear voice sample to clone my voice for multi-language dubbing.";
 
 interface DubbingPanelProps {
 	controller: ReturnType<typeof useDubbingController>;
@@ -63,12 +74,22 @@ export function DubbingPanel({
 		handleSaveApiKey,
 		modelStatusByQuantization,
 		handleDownloadModel,
+		voiceSourceMode,
+		setVoiceSourceMode,
+		voiceSourceType,
 		referenceAudioPath,
 		referenceDurationSec,
 		referenceTranscript,
 		setReferenceTranscript,
 		isExtractingReference,
+		isUploadingReference,
+		isSavingLiveReference,
+		isTranscribingReference,
 		handleExtractReference,
+		handleUploadReference,
+		handleSaveLiveRecord,
+		handleRetranscribeReference,
+		handleClearReference,
 		generationStage,
 		generationProgress,
 		generationError,
@@ -78,6 +99,13 @@ export function DubbingPanel({
 		handleSetVolume,
 		handleRemoveDubbedTrack,
 	} = controller;
+
+	const voiceRecorder = useVoiceRecorder({
+		maxDurationSec: 8,
+		onComplete: (buffer, mime) => {
+			void handleSaveLiveRecord(buffer, mime, DEFAULT_PROMPT_SCRIPT);
+		},
+	});
 
 	const selectedQuantStatus = modelStatusByQuantization[translationQuantization];
 	const isGenerating =
@@ -180,8 +208,8 @@ export function DubbingPanel({
 				</Select>
 			</section>
 
-			{/* Zero-Shot Voice Reference Sample */}
-			<section className="flex flex-col gap-2">
+			{/* Creator Voice Sample (3-Way: Timeline Slice, Upload Audio, Live Quick Record) */}
+			<section className="flex flex-col gap-2.5">
 				<div className="flex items-center justify-between">
 					<Label className="text-[13px] font-medium">Creator Voice Sample</Label>
 					<span className="text-[11px] text-muted-foreground">
@@ -192,22 +220,33 @@ export function DubbingPanel({
 				{referenceAudioPath ? (
 					<div className="rounded-xl border border-border bg-card/50 p-3 flex flex-col gap-2.5">
 						<div className="flex items-center justify-between">
-							<span className="text-[11px] text-emerald-500 font-medium flex items-center gap-1.5">
-								<span className="size-1.5 rounded-full bg-emerald-500" />
-								Sample Ready (
-								{referenceDurationSec
-									? `${referenceDurationSec.toFixed(1)}s`
-									: "Extracted"}
-								)
-							</span>
+							<div className="flex items-center gap-2">
+								<span className="text-[11px] text-emerald-500 font-medium flex items-center gap-1.5">
+									<span className="size-1.5 rounded-full bg-emerald-500" />
+									Sample Ready (
+									{referenceDurationSec
+										? `${referenceDurationSec.toFixed(1)}s`
+										: "Ready"}
+									)
+								</span>
+								<span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/80 text-muted-foreground font-normal">
+									{voiceSourceType === "timeline"
+										? "From Recording"
+										: voiceSourceType === "upload"
+											? "Uploaded File"
+											: voiceSourceType === "record"
+												? "Quick Record"
+												: "Voice Reference"}
+								</span>
+							</div>
 							<Button
 								size="sm"
 								variant="ghost"
-								className="h-6 text-[10px] text-muted-foreground hover:text-foreground"
-								onPress={handleExtractReference}
-								isDisabled={isExtractingReference}
+								className="h-6 text-[10px] text-destructive hover:bg-destructive/10 gap-1 px-2"
+								onPress={handleClearReference}
 							>
-								{isExtractingReference ? "Extracting..." : "Re-extract"}
+								<Trash className="size-3" />
+								Replace
 							</Button>
 						</div>
 
@@ -218,33 +257,174 @@ export function DubbingPanel({
 						/>
 
 						<div className="flex flex-col gap-1 mt-1">
-							<Label className="text-[11px] text-muted-foreground">
-								Reference Transcript (must match voice sample exactly)
-							</Label>
+							<div className="flex items-center justify-between">
+								<Label className="text-[11px] text-muted-foreground">
+									Reference Transcript{" "}
+									<span className="text-amber-500 text-[10px]">
+										(must match audio verbatim)
+									</span>
+								</Label>
+								<span className="text-[10px] text-muted-foreground font-mono">
+									{referenceTranscript.length} chars
+								</span>
+							</div>
 							<textarea
 								value={referenceTranscript}
 								onChange={(e) => setReferenceTranscript(e.target.value)}
 								rows={2}
-								className="w-full rounded-md border border-input bg-background px-2 py-1 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+								className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-primary"
 								placeholder="Enter the exact words spoken in the reference audio sample..."
 							/>
 						</div>
+
+						<div className="flex items-center justify-end pt-1">
+							<Button
+								size="sm"
+								variant="ghost"
+								className="h-6 text-[10px] text-muted-foreground hover:text-foreground gap-1 px-2"
+								onPress={handleRetranscribeReference}
+								isDisabled={isTranscribingReference}
+							>
+								<ArrowClockwise className={cn("size-3", isTranscribingReference && "animate-spin")} />
+								{isTranscribingReference ? "Transcribing..." : "Re-transcribe with Whisper"}
+							</Button>
+						</div>
 					</div>
 				) : (
-					<div className="rounded-xl border border-dashed border-border p-4 flex flex-col items-center justify-center gap-2 text-center bg-foreground/[0.02]">
-						<p className="text-xs text-muted-foreground">
-							Extract a clear 5-10 second speech sample from your recording to clone
-							your voice.
-						</p>
-						<Button
-							size="sm"
-							variant="outline"
-							className="h-8 text-xs gap-1.5"
-							onPress={handleExtractReference}
-							isDisabled={isExtractingReference}
+					<div className="flex flex-col gap-2">
+						{/* Source Method Selection */}
+						<ChoiceGroup
+							value={voiceSourceMode}
+							onValueChange={(val) => setVoiceSourceMode(val as "timeline" | "upload" | "record")}
 						>
-							{isExtractingReference ? "Extracting audio..." : "Extract Voice Sample"}
-						</Button>
+							<ChoiceItem value="timeline">
+								<span className="flex items-center gap-1.5 text-xs">
+									<Scissors className="size-3.5" /> From Recording
+								</span>
+							</ChoiceItem>
+							<ChoiceItem value="upload">
+								<span className="flex items-center gap-1.5 text-xs">
+									<UploadSimple className="size-3.5" /> Upload File
+								</span>
+							</ChoiceItem>
+							<ChoiceItem value="record">
+								<span className="flex items-center gap-1.5 text-xs">
+									<MicrophoneIcon className="size-3.5" /> Quick Record
+								</span>
+							</ChoiceItem>
+						</ChoiceGroup>
+
+						{/* Method 1: Extract from Timeline Recording */}
+						{voiceSourceMode === "timeline" && (
+							<div className="rounded-xl border border-dashed border-border p-3.5 flex flex-col items-center justify-center gap-2.5 text-center bg-foreground/[0.02]">
+								<p className="text-xs text-muted-foreground leading-relaxed">
+									Extract a clear 5-10 second speech snippet from the microphone track of your recording to clone your voice.
+								</p>
+								<Button
+									size="sm"
+									variant="outline"
+									className="h-8 text-xs gap-1.5"
+									onPress={handleExtractReference}
+									isDisabled={isExtractingReference}
+								>
+									<Scissors className="size-3.5" />
+									{isExtractingReference ? "Extracting audio..." : "Extract Voice Sample"}
+								</Button>
+							</div>
+						)}
+
+						{/* Method 2: Upload External Audio File */}
+						{voiceSourceMode === "upload" && (
+							<div className="rounded-xl border border-dashed border-border p-3.5 flex flex-col items-center justify-center gap-2.5 text-center bg-foreground/[0.02]">
+								<p className="text-xs text-muted-foreground leading-relaxed">
+									Upload an external voice sample (<code className="text-[11px]">.wav, .mp3, .m4a, .flac</code>). 5-15 seconds recommended.
+								</p>
+								<Button
+									size="sm"
+									variant="outline"
+									className="h-8 text-xs gap-1.5"
+									onPress={() => void handleUploadReference()}
+									isDisabled={isUploadingReference}
+								>
+									<UploadSimple className="size-3.5" />
+									{isUploadingReference ? "Importing audio..." : "Select Audio File"}
+								</Button>
+							</div>
+						)}
+
+						{/* Method 3: Live Quick Record */}
+						{voiceSourceMode === "record" && (
+							<div className="rounded-xl border border-border bg-card/50 p-3.5 flex flex-col gap-2.5">
+								<div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/50 p-2.5">
+									<span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+										Reading Prompt (read aloud):
+									</span>
+									<p className="text-xs text-foreground italic leading-relaxed">
+										"{DEFAULT_PROMPT_SCRIPT}"
+									</p>
+								</div>
+
+								{voiceRecorder.error && (
+									<p className="text-xs text-destructive">{voiceRecorder.error}</p>
+								)}
+
+								{voiceRecorder.isRecording ? (
+									<div className="flex flex-col gap-2 pt-1">
+										<div className="flex items-center justify-between text-xs">
+											<span className="flex items-center gap-1.5 font-medium text-destructive">
+												<span className="size-2 rounded-full bg-destructive animate-pulse" />
+												Recording (00:0{voiceRecorder.durationSec} / 00:08)
+											</span>
+											<span className="text-[11px] text-muted-foreground">
+												Level: {Math.round(voiceRecorder.volume * 100)}%
+											</span>
+										</div>
+
+										{/* Live VU meter */}
+										<div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+											<div
+												className="h-full bg-destructive transition-all duration-75"
+												style={{ width: `${Math.round(voiceRecorder.volume * 100)}%` }}
+											/>
+										</div>
+
+										<div className="flex items-center gap-2 mt-1">
+											<Button
+												size="sm"
+												variant="danger"
+												className="h-8 text-xs flex-1 gap-1.5"
+												onPress={() => void voiceRecorder.stopRecording()}
+											>
+												Stop & Save Sample
+											</Button>
+											<Button
+												size="sm"
+												variant="ghost"
+												className="h-8 text-xs"
+												onPress={voiceRecorder.cancelRecording}
+											>
+												Cancel
+											</Button>
+										</div>
+									</div>
+								) : isSavingLiveReference ? (
+									<div className="flex items-center justify-center py-2 text-xs text-muted-foreground gap-2">
+										<span className="size-2 rounded-full bg-primary animate-ping" />
+										Processing and transcribing live sample with Whisper...
+									</div>
+								) : (
+									<Button
+										size="sm"
+										variant="primary"
+										className="h-8 text-xs gap-1.5"
+										onPress={() => void voiceRecorder.startRecording()}
+									>
+										<MicrophoneIcon className="size-3.5" />
+										Start 8s Voice Recording
+									</Button>
+								)}
+							</div>
+						)}
 					</div>
 				)}
 			</section>

@@ -133,10 +133,15 @@ export function useDubbingController({
 	});
 
 	// Voice Reference Sample
+	const [voiceSourceMode, setVoiceSourceMode] = useState<"timeline" | "upload" | "record">("timeline");
+	const [voiceSourceType, setVoiceSourceType] = useState<"timeline" | "upload" | "record" | null>(null);
 	const [referenceAudioPath, setReferenceAudioPath] = useState<string | null>(null);
 	const [referenceDurationSec, setReferenceDurationSec] = useState<number>(0);
 	const [referenceTranscript, setReferenceTranscript] = useState<string>("");
 	const [isExtractingReference, setIsExtractingReference] = useState<boolean>(false);
+	const [isUploadingReference, setIsUploadingReference] = useState<boolean>(false);
+	const [isSavingLiveReference, setIsSavingLiveReference] = useState<boolean>(false);
+	const [isTranscribingReference, setIsTranscribingReference] = useState<boolean>(false);
 
 	// Pipeline execution state
 	const [generationStage, setGenerationStage] = useState<DubbingGenerationStage>("idle");
@@ -370,7 +375,7 @@ export function useDubbingController({
 		}
 	}, []);
 
-	// Extract reference voice sample from current recording
+	// Extract reference voice sample from current recording (timeline slice)
 	const handleExtractReference = useCallback(async () => {
 		if (!videoPath) {
 			toast.error("No active video source to extract reference voice from");
@@ -404,6 +409,7 @@ export function useDubbingController({
 				setReferenceAudioPath(res.referenceAudioPath);
 				setReferenceDurationSec(res.durationMs ? res.durationMs / 1000 : 0);
 				setReferenceTranscript(res.suggestedTranscript ?? "");
+				setVoiceSourceType("timeline");
 				toast.success("Voice sample extracted successfully");
 			} else {
 				toast.error(res.error ?? "Failed to extract voice sample");
@@ -414,6 +420,117 @@ export function useDubbingController({
 			setIsExtractingReference(false);
 		}
 	}, [videoPath, cues]);
+
+	// Upload external audio file for voice reference
+	const handleUploadReference = useCallback(async (filePath?: string) => {
+		if (!window.electronAPI?.importVoiceReferenceFile) {
+			toast.error("File import is not supported on this platform");
+			return;
+		}
+
+		setIsUploadingReference(true);
+		try {
+			const res = await window.electronAPI.importVoiceReferenceFile({
+				filePath,
+				whisperExecutablePath: whisperExecutablePath ?? undefined,
+				whisperModelPath: whisperModelPath ?? undefined,
+			});
+
+			if (res.canceled) {
+				return;
+			}
+
+			if (res.success && res.referenceAudioPath) {
+				setReferenceAudioPath(res.referenceAudioPath);
+				setReferenceDurationSec(res.durationMs ? res.durationMs / 1000 : 0);
+				setReferenceTranscript(res.suggestedTranscript ?? "");
+				setVoiceSourceType("upload");
+				toast.success("Voice sample imported successfully");
+			} else {
+				toast.error(res.error ?? "Failed to import voice sample");
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Error importing voice sample");
+		} finally {
+			setIsUploadingReference(false);
+		}
+	}, [whisperExecutablePath, whisperModelPath]);
+
+	// Save live recorded microphone sample
+	const handleSaveLiveRecord = useCallback(
+		async (buffer: Uint8Array, mimeType: string, promptText?: string) => {
+			if (!window.electronAPI?.saveLiveVoiceReference) {
+				toast.error("Live voice recording is not supported on this platform");
+				return;
+			}
+
+			setIsSavingLiveReference(true);
+			try {
+				const res = await window.electronAPI.saveLiveVoiceReference({
+					audioBuffer: buffer,
+					mimeType,
+					promptText,
+					whisperExecutablePath: whisperExecutablePath ?? undefined,
+					whisperModelPath: whisperModelPath ?? undefined,
+				});
+
+				if (res.success && res.referenceAudioPath) {
+					setReferenceAudioPath(res.referenceAudioPath);
+					setReferenceDurationSec(res.durationMs ? res.durationMs / 1000 : 0);
+					setReferenceTranscript(res.suggestedTranscript ?? "");
+					setVoiceSourceType("record");
+					toast.success("Voice sample recorded successfully");
+				} else {
+					toast.error(res.error ?? "Failed to save recorded voice sample");
+				}
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Error saving voice recording");
+			} finally {
+				setIsSavingLiveReference(false);
+			}
+		},
+		[whisperExecutablePath, whisperModelPath],
+	);
+
+	// Re-transcribe current reference audio sample with Whisper
+	const handleRetranscribeReference = useCallback(async () => {
+		if (!referenceAudioPath) {
+			toast.error("No reference audio sample to transcribe");
+			return;
+		}
+		if (!window.electronAPI?.transcribeAudioSample) {
+			toast.error("Transcription is not supported on this platform");
+			return;
+		}
+
+		setIsTranscribingReference(true);
+		try {
+			const res = await window.electronAPI.transcribeAudioSample({
+				audioPath: referenceAudioPath,
+				whisperExecutablePath: whisperExecutablePath ?? undefined,
+				whisperModelPath: whisperModelPath ?? undefined,
+			});
+
+			if (res.success && res.transcript) {
+				setReferenceTranscript(res.transcript);
+				toast.success("Voice sample transcript updated");
+			} else {
+				toast.error(res.error ?? "Could not transcribe audio sample");
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Error transcribing audio sample");
+		} finally {
+			setIsTranscribingReference(false);
+		}
+	}, [referenceAudioPath, whisperExecutablePath, whisperModelPath]);
+
+	// Clear reference voice sample
+	const handleClearReference = useCallback(() => {
+		setReferenceAudioPath(null);
+		setReferenceDurationSec(0);
+		setReferenceTranscript("");
+		setVoiceSourceType(null);
+	}, []);
 
 	// Initial checks on mount
 	useEffect(() => {
@@ -746,12 +863,22 @@ export function useDubbingController({
 		checkTtsModelStatus,
 
 		// Voice Sample
+		voiceSourceMode,
+		setVoiceSourceMode,
+		voiceSourceType,
 		referenceAudioPath,
 		referenceDurationSec,
 		referenceTranscript,
 		setReferenceTranscript,
 		isExtractingReference,
+		isUploadingReference,
+		isSavingLiveReference,
+		isTranscribingReference,
 		handleExtractReference,
+		handleUploadReference,
+		handleSaveLiveRecord,
+		handleRetranscribeReference,
+		handleClearReference,
 
 		// Pipeline Generation
 		generationStage,

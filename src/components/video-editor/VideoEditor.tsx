@@ -355,7 +355,7 @@ export default function VideoEditor() {
 		})(),
 	);
 	const dubbingController = useDubbingController({
-		videoPath: videoPath ?? currentSourcePath,
+		videoPath: videoSourcePath ?? currentSourcePath ?? videoPath,
 		cues: timeline.autoCaptions,
 		dubbingTrack: timeline.dubbingTrack,
 		setDubbingTrack: timeline.setDubbingTrack,

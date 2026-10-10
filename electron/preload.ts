@@ -849,12 +849,37 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		return () => ipcRenderer.removeListener("dubbing-tts-model-download-progress", listener);
 	},
 	extractVoiceReference: (options: {
-		videoPath: string;
+		videoPath?: string;
+		audioPath?: string;
 		startMs?: number;
 		durationMs?: number;
 		existingCues?: unknown[];
 	}) => {
 		return ipcRenderer.invoke("dubbing:extract-voice-reference", options);
+	},
+	importVoiceReferenceFile: (options?: {
+		filePath?: string;
+		whisperExecutablePath?: string;
+		whisperModelPath?: string;
+	}) => {
+		return ipcRenderer.invoke("dubbing:import-voice-reference-file", options);
+	},
+	saveLiveVoiceReference: (options: {
+		audioBuffer: Uint8Array | ArrayBuffer | number[] | string;
+		mimeType?: string;
+		promptText?: string;
+		whisperExecutablePath?: string;
+		whisperModelPath?: string;
+	}) => {
+		return ipcRenderer.invoke("dubbing:save-live-voice-reference", options);
+	},
+	transcribeAudioSample: (options: {
+		audioPath: string;
+		whisperExecutablePath?: string;
+		whisperModelPath?: string;
+		language?: string;
+	}) => {
+		return ipcRenderer.invoke("dubbing:transcribe-sample", options);
 	},
 	translateTranscript: (options: {
 		textCues: Array<{ id: string; text: string }>;

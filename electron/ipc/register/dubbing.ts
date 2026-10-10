@@ -8,7 +8,12 @@ import {
 	synthesizeAudioWithLocalEngine,
 } from "../dubbing/fishAudio";
 import { SUPPORTED_DUBBING_LANGUAGES } from "../dubbing/nllbLanguages";
-import { extractVoiceReferenceSample } from "../dubbing/referenceAudio";
+import {
+	extractVoiceReferenceSample,
+	importVoiceReferenceFile,
+	saveLiveVoiceReference,
+	transcribeVoiceReferenceSample,
+} from "../dubbing/referenceAudio";
 import {
 	getCustomOpenAiConfig,
 	hasSecureApiKey,
@@ -24,9 +29,12 @@ import type {
 	AlignCaptionsOptions,
 	DubbingModelQuantization,
 	ExtractVoiceReferenceOptions,
+	ImportVoiceReferenceFileOptions,
+	SaveLiveVoiceReferenceOptions,
 	SupportedApiKeyProvider,
 	SynthesizeApiOptions,
 	SynthesizeLocalOptions,
+	TranscribeAudioSampleOptions,
 	TranslateOptions,
 	TtsQuantization,
 } from "../dubbing/types";
@@ -110,6 +118,27 @@ export function registerDubbingHandlers() {
 		"dubbing:extract-voice-reference",
 		async (_, options: ExtractVoiceReferenceOptions) => {
 			return await extractVoiceReferenceSample(options);
+		},
+	);
+
+	ipcMain.handle(
+		"dubbing:import-voice-reference-file",
+		async (_, options?: ImportVoiceReferenceFileOptions) => {
+			return await importVoiceReferenceFile(options ?? {});
+		},
+	);
+
+	ipcMain.handle(
+		"dubbing:save-live-voice-reference",
+		async (_, options: SaveLiveVoiceReferenceOptions) => {
+			return await saveLiveVoiceReference(options);
+		},
+	);
+
+	ipcMain.handle(
+		"dubbing:transcribe-sample",
+		async (_, options: TranscribeAudioSampleOptions) => {
+			return await transcribeVoiceReferenceSample(options);
 		},
 	);
 

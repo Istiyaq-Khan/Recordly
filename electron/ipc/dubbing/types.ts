@@ -31,7 +31,8 @@ export interface DubbingStatus {
 }
 
 export interface ExtractVoiceReferenceOptions {
-	videoPath: string;
+	videoPath?: string;
+	audioPath?: string;
 	startMs?: number;
 	durationMs?: number;
 	existingCues?: CaptionCue[];
@@ -42,6 +43,35 @@ export interface ExtractVoiceReferenceResult {
 	referenceAudioPath?: string;
 	durationMs?: number;
 	suggestedTranscript?: string;
+	sourceType?: "timeline" | "upload" | "record";
+	error?: string;
+	canceled?: boolean;
+}
+
+export interface ImportVoiceReferenceFileOptions {
+	filePath?: string;
+	whisperExecutablePath?: string | null;
+	whisperModelPath?: string | null;
+}
+
+export interface SaveLiveVoiceReferenceOptions {
+	audioBuffer: Uint8Array | ArrayBuffer | number[] | string;
+	mimeType?: string;
+	promptText?: string;
+	whisperExecutablePath?: string | null;
+	whisperModelPath?: string | null;
+}
+
+export interface TranscribeAudioSampleOptions {
+	audioPath: string;
+	whisperExecutablePath?: string | null;
+	whisperModelPath?: string | null;
+	language?: string;
+}
+
+export interface TranscribeAudioSampleResult {
+	success: boolean;
+	transcript?: string;
 	error?: string;
 }
 
