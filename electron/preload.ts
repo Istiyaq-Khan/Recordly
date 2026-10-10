@@ -763,7 +763,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		language?: string;
 		audioSourceOption?: "mic-only" | "mic-plus-system";
 	}) => {
-		return ipcRenderer.invoke("generate-auto-captions", options);
+		const sanitized = {
+			videoPath: String(options?.videoPath ?? ""),
+			whisperExecutablePath: options?.whisperExecutablePath
+				? String(options.whisperExecutablePath)
+				: undefined,
+			whisperModelPath: String(options?.whisperModelPath ?? ""),
+			language: options?.language ? String(options.language) : undefined,
+			audioSourceOption:
+				options?.audioSourceOption === "mic-plus-system"
+					? ("mic-plus-system" as const)
+					: ("mic-only" as const),
+		};
+		return ipcRenderer.invoke("generate-auto-captions", sanitized);
 	},
 	getDubbingStatus: () => {
 		return ipcRenderer.invoke("dubbing:get-status");
@@ -834,14 +846,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			},
 		) => callback(payload);
 		ipcRenderer.on("dubbing-tts-model-download-progress", listener);
-		return () =>
-			ipcRenderer.removeListener("dubbing-tts-model-download-progress", listener);
+		return () => ipcRenderer.removeListener("dubbing-tts-model-download-progress", listener);
 	},
 	extractVoiceReference: (options: {
 		videoPath: string;
 		startMs?: number;
 		durationMs?: number;
-		existingCues?: any[];
+		existingCues?: unknown[];
 	}) => {
 		return ipcRenderer.invoke("dubbing:extract-voice-reference", options);
 	},
@@ -891,11 +902,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	getDubbingApiKeys: () => {
 		return ipcRenderer.invoke("dubbing:get-api-keys");
 	},
-	saveCustomOpenAiConfig: (config: {
-		apiKey?: string;
-		baseUrl?: string;
-		model?: string;
-	}) => {
+	saveCustomOpenAiConfig: (config: { apiKey?: string; baseUrl?: string; model?: string }) => {
 		return ipcRenderer.invoke("dubbing:save-custom-openai-config", config);
 	},
 	setCurrentVideoPath: (
@@ -1248,4 +1255,5 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("countdown-tick", listener);
 		return () => ipcRenderer.removeListener("countdown-tick", listener);
 	},
+	writeClipboardText: (text: string) => ipcRenderer.invoke("clipboard:write-text", text),
 });

@@ -1,4 +1,4 @@
-import { Toast, toast as heroToast } from "@heroui/react";
+import { toast as heroToast, Toast } from "@heroui/react";
 import { isValidElement, type ReactNode } from "react";
 
 type Options = {
@@ -11,11 +11,63 @@ type Options = {
 type Variant = "default" | "accent" | "success" | "warning" | "danger";
 const ids = new Map<string | number, string>();
 
-function plainText(value: ReactNode): string {
+export function plainText(value: unknown): string {
+	if (value instanceof Error) {
+		return value.stack || value.message;
+	}
 	if (typeof value === "string" || typeof value === "number") return String(value);
 	if (Array.isArray(value)) return value.map(plainText).join("");
 	if (isValidElement<{ children?: ReactNode }>(value)) return plainText(value.props.children);
+	if (value && typeof value === "object") {
+		try {
+			return JSON.stringify(value, Object.getOwnPropertyNames(value));
+		} catch {
+			return String(value);
+		}
+	}
 	return "";
+}
+
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+	// Tier 1: Electron native clipboard (immune to window focus restrictions)
+	if (
+		typeof window !== "undefined" &&
+		typeof window.electronAPI?.writeClipboardText === "function"
+	) {
+		try {
+			const res = await window.electronAPI.writeClipboardText(text);
+			if (res?.success) return true;
+		} catch {
+			// fallback
+		}
+	}
+	// Tier 2: Navigator clipboard
+	if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+		try {
+			await navigator.clipboard.writeText(text);
+			return true;
+		} catch {
+			// fallback
+		}
+	}
+	// Tier 3: Legacy textarea execCommand
+	if (typeof document !== "undefined") {
+		try {
+			const textarea = document.createElement("textarea");
+			textarea.value = text;
+			textarea.style.position = "fixed";
+			textarea.style.opacity = "0";
+			document.body.appendChild(textarea);
+			textarea.focus();
+			textarea.select();
+			const success = document.execCommand("copy");
+			document.body.removeChild(textarea);
+			if (success) return true;
+		} catch {
+			// complete failure
+		}
+	}
+	return false;
 }
 
 // Keep existing callers compatible while HeroUI owns the queue and presentation.
@@ -44,13 +96,15 @@ function notify(title: ReactNode, options: Options = {}, variant: Variant = "def
 				? {
 						children: "Copy",
 						onPress: () => {
-							void navigator.clipboard.writeText(errorText).then(
-								() => heroToast.success("Error copied"),
-								() =>
+							void copyTextToClipboard(errorText).then((success) => {
+								if (success) {
+									heroToast.success("Error copied");
+								} else {
 									heroToast.danger("Could not copy error", {
 										description: errorText,
-									}),
-							);
+									});
+								}
+							});
 						},
 					}
 				: undefined,

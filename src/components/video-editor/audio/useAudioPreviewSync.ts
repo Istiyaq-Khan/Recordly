@@ -438,7 +438,7 @@ export function useAudioPreviewSync({
 			const shouldSeek =
 				timelineJumped ||
 				(!isPlaying && Math.abs(audio.currentTime - targetTime) > driftThreshold) ||
-				(isPlaying && Math.abs(audio.currentTime - targetTime) > 0.04);
+				(isPlaying && Math.abs(audio.currentTime - targetTime) > 0.8);
 			if (shouldSeek) {
 				try {
 					audio.currentTime = targetTime;
@@ -447,15 +447,9 @@ export function useAudioPreviewSync({
 				}
 			}
 
-			const syncedPlaybackRate = isPlaying
-				? getMediaSyncPlaybackRate({
-						basePlaybackRate: sourcePlaybackRate,
-						currentTime: audio.currentTime,
-						targetTime,
-						toleranceSeconds: 0.02,
-						maxAdjustment: 0.04,
-					})
-				: sourcePlaybackRate;
+			// KISS for companion source tracks: fixed playback rate avoids audible flutter/stutter
+			// from continuous micro-corrections on companion audio.
+			const syncedPlaybackRate = sourcePlaybackRate;
 			if (Math.abs(audio.playbackRate - syncedPlaybackRate) > 0.001) {
 				audio.playbackRate = syncedPlaybackRate;
 			}

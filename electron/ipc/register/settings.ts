@@ -1,7 +1,7 @@
-import { createCountdownController } from "../../countdownController";
 import fs from "node:fs/promises";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, clipboard, ipcMain } from "electron";
 import { hasAppSetting, readAppSettingsStore, writeAppSettingsStore } from "../../appSettingsStore";
+import { createCountdownController } from "../../countdownController";
 import { hideCursor } from "../../cursorHider";
 import { createCountdownWindow } from "../../windows";
 import { COUNTDOWN_SETTINGS_FILE, RECORDINGS_SETTINGS_FILE, SHORTCUTS_FILE } from "../constants";
@@ -209,5 +209,13 @@ export function registerSettingsHandlers() {
 			success: true,
 			seconds: countdownInProgress ? countdownRemaining : null,
 		};
+	});
+
+	ipcMain.handle("clipboard:write-text", async (_, text: unknown) => {
+		if (typeof text === "string") {
+			clipboard.writeText(text);
+			return { success: true };
+		}
+		return { success: false, error: "Invalid text payload" };
 	});
 }

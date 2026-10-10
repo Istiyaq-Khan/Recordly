@@ -1,5 +1,6 @@
-import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAutoCaptionController } from "./useAutoCaptionController";
+
 const state = vi.hoisted(() => ({ refs: [] as { current: unknown }[], index: 0 }));
 vi.mock("react", () => ({
 	useCallback: (callback: unknown) => callback,
@@ -86,4 +87,23 @@ it("preserves existing captions on failure and permits retry", async () => {
 	await retry;
 	expect(test.generateAutoCaptions).toHaveBeenCalledTimes(2);
 	expect(test.params.setAutoCaptions).toHaveBeenCalledWith(cues);
+});
+
+it("sanitizes synthetic event arguments and passes default audioSourceOption", async () => {
+	const test = setup();
+	const controller = test.render();
+	const fakeSyntheticEvent = {
+		preventDefault: vi.fn(),
+		stopPropagation: vi.fn(),
+		target: {},
+		nativeEvent: {},
+	};
+	const pending = controller.handleGenerateAutoCaptions(fakeSyntheticEvent);
+	test.complete({ success: true, cues });
+	await pending;
+	expect(test.generateAutoCaptions).toHaveBeenCalledWith(
+		expect.objectContaining({
+			audioSourceOption: "mic-only",
+		}),
+	);
 });

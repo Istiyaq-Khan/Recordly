@@ -9,7 +9,8 @@ vi.mock("electron", () => ({
 	safeStorage: {
 		isEncryptionAvailable: () => true,
 		encryptString: (str: string) => Buffer.from(str).toString("base64"),
-		decryptString: (buf: Buffer) => Buffer.from(buf.toString("utf8"), "base64").toString("utf8"),
+		decryptString: (buf: Buffer) =>
+			Buffer.from(buf.toString("utf8"), "base64").toString("utf8"),
 	},
 	ipcMain: {
 		handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -19,9 +20,15 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("../dubbing/fishAudio", () => ({
-	checkLocalDubbingEngineStatus: vi.fn().mockResolvedValue({ installed: true, executablePath: "/mock/python" }),
-	synthesizeAudioWithApi: vi.fn().mockResolvedValue({ success: true, dubbedAudioPath: "/out/api.wav", durationMs: 4500 }),
-	synthesizeAudioWithLocalEngine: vi.fn().mockResolvedValue({ success: true, dubbedAudioPath: "/out/local.wav", durationMs: 4500 }),
+	checkLocalDubbingEngineStatus: vi
+		.fn()
+		.mockResolvedValue({ installed: true, executablePath: "/mock/python" }),
+	synthesizeAudioWithApi: vi
+		.fn()
+		.mockResolvedValue({ success: true, dubbedAudioPath: "/out/api.wav", durationMs: 4500 }),
+	synthesizeAudioWithLocalEngine: vi
+		.fn()
+		.mockResolvedValue({ success: true, dubbedAudioPath: "/out/local.wav", durationMs: 4500 }),
 }));
 
 vi.mock("../dubbing/referenceAudio", () => ({
@@ -34,7 +41,9 @@ vi.mock("../dubbing/referenceAudio", () => ({
 }));
 
 vi.mock("../dubbing/translation", () => ({
-	getTranslationModelStatus: vi.fn().mockResolvedValue({ success: true, exists: true, path: "/models/int8" }),
+	getTranslationModelStatus: vi
+		.fn()
+		.mockResolvedValue({ success: true, exists: true, path: "/models/int8" }),
 	downloadTranslationModel: vi.fn().mockResolvedValue({ success: true, path: "/models/int8" }),
 	translateTranscript: vi.fn().mockResolvedValue({
 		success: true,
@@ -50,8 +59,8 @@ vi.mock("../dubbing/captionAlignment", () => ({
 	}),
 }));
 
+import { resolveFloresLanguageCode, SUPPORTED_DUBBING_LANGUAGES } from "../dubbing/nllbLanguages";
 import { registerDubbingHandlers } from "./dubbing";
-import { SUPPORTED_DUBBING_LANGUAGES, resolveFloresLanguageCode } from "../dubbing/nllbLanguages";
 
 describe("Dubbing IPC Handlers", () => {
 	beforeEach(() => {
@@ -81,14 +90,17 @@ describe("Dubbing IPC Handlers", () => {
 
 	it("returns supported dubbing languages list", async () => {
 		const handler = handlers.get("dubbing:get-supported-languages")!;
-		const result = await handler(null as any);
+		const result = await handler({} as unknown as Electron.IpcMainInvokeEvent);
 		expect(Array.isArray(result)).toBe(true);
-		expect((result as any[]).length).toBe(SUPPORTED_DUBBING_LANGUAGES.length);
+		expect((result as unknown[]).length).toBe(SUPPORTED_DUBBING_LANGUAGES.length);
 	});
 
 	it("handles translation model status query for user-selected quantization", async () => {
 		const handler = handlers.get("dubbing:get-translation-model-status")!;
-		const res = (await handler(null as any, "int8")) as any;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, "int8")) as Record<
+			string,
+			unknown
+		>;
 		expect(res.success).toBe(true);
 		expect(res.exists).toBe(true);
 		expect(res.path).toBe("/models/int8");
@@ -96,7 +108,9 @@ describe("Dubbing IPC Handlers", () => {
 
 	it("handles reference audio extraction request", async () => {
 		const handler = handlers.get("dubbing:extract-voice-reference")!;
-		const res = (await handler(null as any, { videoPath: "/input/video.mp4" })) as any;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, {
+			videoPath: "/input/video.mp4",
+		})) as Record<string, unknown>;
 		expect(res.success).toBe(true);
 		expect(res.referenceAudioPath).toBe("/out/sample.wav");
 		expect(res.suggestedTranscript).toBe("Test speech transcript");
@@ -104,37 +118,37 @@ describe("Dubbing IPC Handlers", () => {
 
 	it("handles text translation via NLLB or API", async () => {
 		const handler = handlers.get("dubbing:translate")!;
-		const res = (await handler(null as any, {
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, {
 			textCues: [{ id: "c1", text: "Hello world" }],
 			targetLang: "es",
 			engine: "local-nllb",
 			quantization: "int8",
-		})) as any;
+		})) as Record<string, unknown>;
 		expect(res.success).toBe(true);
 		expect(res.translatedCues).toEqual([{ id: "c1", text: "Hola mundo" }]);
 	});
 
 	it("handles audio synthesis via API", async () => {
 		const handler = handlers.get("dubbing:synthesize-api")!;
-		const res = (await handler(null as any, {
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, {
 			text: "Hola mundo",
 			referenceAudioPath: "/out/sample.wav",
 			referenceTranscript: "Test speech transcript",
 			provider: "fish-audio",
-		})) as any;
+		})) as Record<string, unknown>;
 		expect(res.success).toBe(true);
 		expect(res.dubbedAudioPath).toBe("/out/api.wav");
 	});
 
 	it("handles caption alignment", async () => {
 		const handler = handlers.get("dubbing:align-captions")!;
-		const res = (await handler(null as any, {
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, {
 			dubbedAudioPath: "/out/api.wav",
 			targetLanguage: "es",
-		})) as any;
+		})) as { success: boolean; cues?: Array<{ text: string }> };
 		expect(res.success).toBe(true);
 		expect(res.cues).toBeDefined();
-		expect(res.cues[0].text).toBe("Hola mundo");
+		expect(res.cues?.[0]?.text).toBe("Hola mundo");
 	});
 });
 

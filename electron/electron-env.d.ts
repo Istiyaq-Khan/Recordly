@@ -853,7 +853,10 @@ interface Window {
 			cues?: any[];
 			error?: string;
 		}>;
-		saveDubbingApiKey: (payload: { provider: string; key: string }) => Promise<{ success: boolean; error?: string }>;
+		saveDubbingApiKey: (payload: {
+			provider: string;
+			key: string;
+		}) => Promise<{ success: boolean; error?: string }>;
 		getDubbingApiKeys: () => Promise<Record<string, boolean>>;
 		saveCustomOpenAiConfig: (config: {
 			apiKey?: string;
@@ -1171,6 +1174,7 @@ interface Window {
 		cancelCountdown: () => Promise<{ success: boolean }>;
 		getActiveCountdown: () => Promise<{ success: boolean; seconds: number | null }>;
 		onCountdownTick: (callback: (seconds: number) => void) => () => void;
+		writeClipboardText: (text: string) => Promise<{ success: boolean; error?: string }>;
 	};
 }
 

@@ -236,6 +236,14 @@ export function createProcessedMicrophoneConstraints(
 	return { audio, video: false };
 }
 
+export function isStudioMicrophone(label?: string | null): boolean {
+	if (!label) return false;
+	const normalized = label.toLowerCase();
+	return /condenser|studio|yeti|shure|rode|at2020|audio-technica|sm7b|mv7|elgato|quadcast|fifine|hyperx|scarlett|focusrite|behringer|samson|usb audio|usb mic/i.test(
+		normalized,
+	);
+}
+
 export function createBrowserRecordingOptions({
 	audioBitsPerSecond,
 	mimeType,
@@ -1188,15 +1196,17 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		}
 
 		let micLabel: string | undefined;
-		if ((useNativeMacScreenCapture || useNativeWindowsCapture) && microphoneEnabled) {
+		if (microphoneEnabled) {
 			try {
 				const devices = await navigator.mediaDevices.enumerateDevices();
 				const mic = devices.find(
-					(d) => d.deviceId === microphoneDeviceId && d.kind === "audioinput",
+					(d) =>
+						(microphoneDeviceId ? d.deviceId === microphoneDeviceId : true) &&
+						d.kind === "audioinput",
 				);
 				micLabel = mic?.label || undefined;
 			} catch {
-				// Fall through - native process will use the default mic.
+				// Fall through - native or fallback process will use the default mic.
 			}
 		}
 
@@ -1829,9 +1839,14 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						void logNativeCaptureDiagnostics("start-browser-microphone-fallback");
 						console.info("Using browser microphone processing for this recording.");
 						try {
+							const effectiveProfile =
+								browserMicrophoneProfile.current === "processed" &&
+								isStudioMicrophone(micLabel)
+									? "raw"
+									: browserMicrophoneProfile.current;
 							const microphoneConstraints = createProcessedMicrophoneConstraints(
 								microphoneDeviceId,
-								browserMicrophoneProfile.current,
+								effectiveProfile,
 							);
 							micFallbackRequestedConstraints.current = microphoneConstraints;
 							const micStream =
@@ -2038,10 +2053,15 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 				if (microphoneEnabled) {
 					try {
+						const effectiveProfile =
+							browserMicrophoneProfile.current === "processed" &&
+							isStudioMicrophone(micLabel)
+								? "raw"
+								: browserMicrophoneProfile.current;
 						microphoneStream.current = await navigator.mediaDevices.getUserMedia(
 							createProcessedMicrophoneConstraints(
 								microphoneDeviceId,
-								browserMicrophoneProfile.current,
+								effectiveProfile,
 							),
 						);
 					} catch (audioError) {

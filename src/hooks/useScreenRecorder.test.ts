@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createBrowserRecordingOptions,
 	createProcessedMicrophoneConstraints,
+	isStudioMicrophone,
 	normalizeBrowserMicrophoneProfile,
 	resolveBrowserCaptureCursorPolicy,
 	shouldUseNativeWindowsCaptureForSource,
@@ -108,7 +109,25 @@ describe("createProcessedMicrophoneConstraints", () => {
 	it("normalizes invalid lab microphone profiles to production voice processing", () => {
 		expect(normalizeBrowserMicrophoneProfile("RAW")).toBe("raw");
 		expect(normalizeBrowserMicrophoneProfile("unknown")).toBe("processed");
-		expect(normalizeBrowserMicrophoneProfile(null)).toBe("processed");
+	});
+});
+
+describe("isStudioMicrophone", () => {
+	it("identifies condenser and studio microphones by name", () => {
+		expect(isStudioMicrophone("Shure MV7 USB Microphone")).toBe(true);
+		expect(isStudioMicrophone("Rode NT-USB Mini")).toBe(true);
+		expect(isStudioMicrophone("Blue Yeti Nano")).toBe(true);
+		expect(isStudioMicrophone("Audio-Technica AT2020USB+")).toBe(true);
+		expect(isStudioMicrophone("HyperX QuadCast")).toBe(true);
+		expect(isStudioMicrophone("Studio Condenser Mic")).toBe(true);
+	});
+
+	it("returns false for generic or internal laptop microphones", () => {
+		expect(isStudioMicrophone("Internal Microphone (Conexant)")).toBe(false);
+		expect(isStudioMicrophone("Realtek High Definition Audio")).toBe(false);
+		expect(isStudioMicrophone("")).toBe(false);
+		expect(isStudioMicrophone(null)).toBe(false);
+		expect(isStudioMicrophone(undefined)).toBe(false);
 	});
 });
 

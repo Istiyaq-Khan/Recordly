@@ -227,14 +227,26 @@ export function registerCaptionHandlers() {
 			_,
 			options: {
 				videoPath: string;
-				whisperExecutablePath: string;
+				whisperExecutablePath?: string;
 				whisperModelPath: string;
 				language?: string;
 				audioSourceOption?: "mic-only" | "mic-plus-system";
 			},
 		) => {
 			try {
-				const result = await generateAutoCaptionsFromVideo(options);
+				const sanitizedOptions = {
+					videoPath: String(options?.videoPath ?? ""),
+					whisperExecutablePath: options?.whisperExecutablePath
+						? String(options.whisperExecutablePath)
+						: undefined,
+					whisperModelPath: String(options?.whisperModelPath ?? ""),
+					language: options?.language ? String(options.language) : undefined,
+					audioSourceOption:
+						options?.audioSourceOption === "mic-plus-system"
+							? ("mic-plus-system" as const)
+							: ("mic-only" as const),
+				};
+				const result = await generateAutoCaptionsFromVideo(sanitizedOptions);
 				return {
 					success: true,
 					cues: result.cues,
@@ -245,11 +257,11 @@ export function registerCaptionHandlers() {
 				};
 			} catch (error) {
 				console.error("Failed to generate auto captions:", error);
+				const errorMessage = error instanceof Error ? error.message : String(error);
 				return {
 					success: false,
-					error: String(error),
-					message:
-						error instanceof Error ? error.message : "Failed to generate auto captions",
+					error: errorMessage,
+					message: errorMessage || "Failed to generate auto captions",
 				};
 			}
 		},

@@ -1,6 +1,6 @@
 import { WebDemuxer } from "web-demuxer";
-import { AudioTimelineProcessor } from "./audioTimelineProcessor";
 import { DECODE_BACKPRESSURE_LIMIT, OFFLINE_AUDIO_SAMPLE_RATE } from "./audioProcessorShared";
+import { AudioTimelineProcessor } from "./audioTimelineProcessor";
 import { resolveMediaElementSource } from "./localMediaSource";
 
 export class AudioMediaProcessor extends AudioTimelineProcessor {
@@ -189,7 +189,7 @@ export class AudioMediaProcessor extends AudioTimelineProcessor {
 			const int16 = new Int16Array(bytes);
 			const f32 = new Float32Array(sampleCount);
 			for (let i = 0; i < sampleCount; i++) {
-				f32[i] = int16[i] / 0x8000;
+				f32[i] = Math.max(-1, Math.min(1, int16[i] / 0x8000));
 			}
 			return f32;
 		}
@@ -197,7 +197,7 @@ export class AudioMediaProcessor extends AudioTimelineProcessor {
 			const int32 = new Int32Array(bytes);
 			const f32 = new Float32Array(sampleCount);
 			for (let i = 0; i < sampleCount; i++) {
-				f32[i] = int32[i] / 0x80000000;
+				f32[i] = Math.max(-1, Math.min(1, int32[i] / 0x80000000));
 			}
 			return f32;
 		}
@@ -205,7 +205,7 @@ export class AudioMediaProcessor extends AudioTimelineProcessor {
 			const uint8 = new Uint8Array(bytes);
 			const f32 = new Float32Array(sampleCount);
 			for (let i = 0; i < sampleCount; i++) {
-				f32[i] = (uint8[i] - 128) / 128;
+				f32[i] = Math.max(-1, Math.min(1, (uint8[i] - 128) / 128));
 			}
 			return f32;
 		}

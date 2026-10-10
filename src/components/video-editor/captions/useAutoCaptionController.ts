@@ -156,7 +156,7 @@ export function useAutoCaptionController({
 	]);
 
 	const handleGenerateAutoCaptions = useCallback(
-		async (audioSourceOverride?: "mic-only" | "mic-plus-system") => {
+		async (audioSourceOverride?: "mic-only" | "mic-plus-system" | unknown) => {
 			if (captionGenerationInFlightRef.current || isGeneratingCaptions) return;
 			captionGenerationInFlightRef.current = true;
 			setIsGeneratingCaptions(true);
@@ -189,49 +189,57 @@ export function useAutoCaptionController({
 					setVideoSourcePath(sourcePath);
 					setVideoPath(await resolveVideoUrl(sourcePath));
 				}
+				const validatedSourceOption: "mic-only" | "mic-plus-system" =
+					audioSourceOverride === "mic-plus-system" || audioSourceOverride === "mic-only"
+						? audioSourceOverride
+						: (autoCaptionSettings.audioSourceOption ?? "mic-only");
 				const result = await window.electronAPI.generateAutoCaptions({
 					videoPath: sourcePath,
 					whisperExecutablePath: whisperExecutablePath ?? undefined,
 					whisperModelPath,
 					language: autoCaptionSettings.language,
-					audioSourceOption:
-						audioSourceOverride ?? autoCaptionSettings.audioSourceOption ?? "mic-only",
+					audioSourceOption: validatedSourceOption,
 				});
-			if (resolveAutoCaptionSourcePath(activeSourceRef.current) !== sourcePath) {
-				toast.info("Recording changed; generated captions were not applied.");
-				return;
+				if (resolveAutoCaptionSourcePath(activeSourceRef.current) !== sourcePath) {
+					toast.info("Recording changed; generated captions were not applied.");
+					return;
+				}
+				if (!result.success || !result.cues) {
+					const errorMessage = result.error
+						? getErrorMessage(result.error)
+						: result.message;
+					toast.error(errorMessage || "Failed to generate captions");
+					return;
+				}
+				setAutoCaptions(result.cues);
+				if (result.cues.length > 0) {
+					setAutoCaptionSettings((current) => ({ ...current, enabled: true }));
+				}
+				toast.success(result.message || `Generated ${result.cues.length} captions`);
+			} catch (error) {
+				toast.error(getErrorMessage(error));
+			} finally {
+				captionGenerationInFlightRef.current = false;
+				setIsGeneratingCaptions(false);
 			}
-			if (!result.success || !result.cues) {
-				const errorMessage = result.error ? getErrorMessage(result.error) : result.message;
-				toast.error(errorMessage || "Failed to generate captions");
-				return;
-			}
-			setAutoCaptions(result.cues);
-			if (result.cues.length > 0) {
-				setAutoCaptionSettings((current) => ({ ...current, enabled: true }));
-			}
-			toast.success(result.message || `Generated ${result.cues.length} captions`);
-		} catch (error) {
-			toast.error(getErrorMessage(error));
-		} finally {
-			captionGenerationInFlightRef.current = false;
-			setIsGeneratingCaptions(false);
-		}
-	}, [
-		autoCaptionSettings.language,
-		isGeneratingCaptions,
-		setAutoCaptionSettings,
-		setAutoCaptions,
-		setIsGeneratingCaptions,
-		setVideoPath,
-		setVideoSourcePath,
-		syncActiveVideoSource,
-		videoPath,
-		videoSourcePath,
-		webcamSourcePath,
-		whisperExecutablePath,
-		whisperModelPath,
-	]);
+		},
+		[
+			autoCaptionSettings.audioSourceOption,
+			autoCaptionSettings.language,
+			isGeneratingCaptions,
+			setAutoCaptionSettings,
+			setAutoCaptions,
+			setIsGeneratingCaptions,
+			setVideoPath,
+			setVideoSourcePath,
+			syncActiveVideoSource,
+			videoPath,
+			videoSourcePath,
+			webcamSourcePath,
+			whisperExecutablePath,
+			whisperModelPath,
+		],
+	);
 
 	const handleSaveAutoCaptionEdit = useCallback(
 		(target: CaptionEditTarget, text: string) => {
