@@ -859,6 +859,7 @@ interface Window {
 			success: boolean;
 			transcript?: string;
 			error?: string;
+			modelMissing?: boolean;
 		}>;
 		translateTranscript: (options: {
 			textCues: Array<{ id: string; text: string }>;

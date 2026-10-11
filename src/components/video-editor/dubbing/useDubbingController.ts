@@ -546,7 +546,11 @@ export function useDubbingController({
 				setReferenceDurationSec(res.durationMs ? res.durationMs / 1000 : 0);
 				setReferenceTranscript(res.suggestedTranscript ?? "");
 				setVoiceSourceType("upload");
-				toast.success("Voice sample imported successfully");
+				if (res.suggestedTranscript) {
+					toast.success("Voice sample imported successfully");
+				} else {
+					toast.success("Voice sample imported. You can type the transcript below.");
+				}
 			} else {
 				toast.error(res.error ?? "Failed to import voice sample");
 			}
@@ -580,7 +584,11 @@ export function useDubbingController({
 					setReferenceDurationSec(res.durationMs ? res.durationMs / 1000 : 0);
 					setReferenceTranscript(res.suggestedTranscript ?? "");
 					setVoiceSourceType("record");
-					toast.success("Voice sample recorded successfully");
+					if (res.suggestedTranscript) {
+						toast.success("Voice sample recorded successfully");
+					} else {
+						toast.success("Voice sample recorded. You can type the transcript below.");
+					}
 				} else {
 					toast.error(res.error ?? "Failed to save recorded voice sample");
 				}
@@ -615,6 +623,8 @@ export function useDubbingController({
 			if (res.success && res.transcript) {
 				setReferenceTranscript(res.transcript);
 				toast.success("Voice sample transcript updated");
+			} else if (res.modelMissing) {
+				toast.info(res.error ?? "Whisper model not downloaded. You can enter the transcript manually.");
 			} else {
 				toast.error(res.error ?? "Could not transcribe audio sample");
 			}
@@ -769,7 +779,7 @@ export function useDubbingController({
 			let currentRefPath = referenceAudioPath;
 			let currentRefTranscript = referenceTranscript.trim();
 
-			if (!currentRefPath || !currentRefTranscript) {
+			if (!currentRefPath) {
 				toast.info("Extracting voice sample from current recording...");
 				const refRes = await window.electronAPI.extractVoiceReference({
 					videoPath,
@@ -787,6 +797,11 @@ export function useDubbingController({
 				setReferenceAudioPath(currentRefPath);
 				setReferenceTranscript(currentRefTranscript);
 				setReferenceDurationSec(refRes.durationMs ? refRes.durationMs / 1000 : 0);
+			}
+
+			// If transcript is still empty, use the first caption cue text as fallback
+			if (!currentRefTranscript && cues.length > 0) {
+				currentRefTranscript = cues[0].text.trim();
 			}
 
 			// Stage 1: Translating Captions... (0% – 25%)

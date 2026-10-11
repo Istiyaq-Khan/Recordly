@@ -894,7 +894,10 @@ export class VideoExporter {
 						(audioPlan.audioMode === "edited-track" &&
 							audioPlan.strategy === "filtergraph-fast-path")
 							? audioPlan.audioSourcePath
-							: null,
+							: this.config.dubbingTrack?.isActive &&
+								  this.config.dubbingTrack.dubbedAudioPath
+								? this.config.dubbingTrack.dubbedAudioPath
+								: null,
 					trimSegments:
 						audioPlan.audioMode === "trim-source" ? audioPlan.trimSegments : undefined,
 					editedTrackStrategy:
@@ -988,7 +991,10 @@ export class VideoExporter {
 				(audioPlan.audioMode === "edited-track" &&
 					audioPlan.strategy === "filtergraph-fast-path")
 					? audioPlan.audioSourcePath
-					: null,
+					: this.config.dubbingTrack?.isActive &&
+						  this.config.dubbingTrack.dubbedAudioPath
+						? this.config.dubbingTrack.dubbedAudioPath
+						: null,
 			trimSegments:
 				audioPlan.audioMode === "trim-source" ? audioPlan.trimSegments : undefined,
 			editedTrackStrategy:

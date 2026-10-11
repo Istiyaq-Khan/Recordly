@@ -4084,20 +4084,22 @@ export async function muxNativeVideoExportAudio(
 		audioMode === "edited-track" && options.editedTrackStrategy === "filtergraph-fast-path";
 
 	if (audioMode === "edited-track" && !useEditedTrackFiltergraph) {
-		if (!options.editedAudioData) {
+		if (audioInputPath) {
+			// Direct filesystem audio input provided (e.g. dubbed master track on disk) - bypass editedAudioData buffer!
+		} else if (!options.editedAudioData) {
 			throw new Error("Edited audio data is missing for native export");
+		} else {
+			const extension = getEditedAudioExtension(options.editedAudioMimeType);
+			audioInputPath = path.join(
+				app.getPath("temp"),
+				`recordly-export-audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`,
+			);
+			const tempAudioWriteStartedAt = getNowMs();
+			await fs.writeFile(audioInputPath, Buffer.from(options.editedAudioData));
+			metrics.tempEditedAudioWriteMs = getNowMs() - tempAudioWriteStartedAt;
+			metrics.tempEditedAudioBytes = options.editedAudioData.byteLength;
+			tempArtifacts.push(audioInputPath);
 		}
-
-		const extension = getEditedAudioExtension(options.editedAudioMimeType);
-		audioInputPath = path.join(
-			app.getPath("temp"),
-			`recordly-export-audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`,
-		);
-		const tempAudioWriteStartedAt = getNowMs();
-		await fs.writeFile(audioInputPath, Buffer.from(options.editedAudioData));
-		metrics.tempEditedAudioWriteMs = getNowMs() - tempAudioWriteStartedAt;
-		metrics.tempEditedAudioBytes = options.editedAudioData.byteLength;
-		tempArtifacts.push(audioInputPath);
 	}
 
 	if (!audioInputPath) {

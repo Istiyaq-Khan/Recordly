@@ -413,8 +413,16 @@ export async function transcribeAudioFile(options: {
 	const whisperExecutablePath = await resolveWhisperExecutablePath(options.whisperExecutablePath ?? undefined);
 	const rawModelPath = options.whisperModelPath?.trim() || WHISPER_SMALL_MODEL_PATH;
 	const whisperModelPath = path.resolve(rawModelPath);
-	await ensureReadableFile(whisperExecutablePath, { executable: true });
-	await ensureReadableFile(whisperModelPath);
+	try {
+		await ensureReadableFile(whisperExecutablePath, { executable: true });
+	} catch {
+		throw new Error("Whisper runtime executable not found. Please install Whisper CLI or verify Caption settings.");
+	}
+	try {
+		await ensureReadableFile(whisperModelPath);
+	} catch {
+		throw new Error("Whisper model not downloaded. You can enter or edit the transcript manually.");
+	}
 
 	const tempBase = path.join(
 		app.getPath("temp"),

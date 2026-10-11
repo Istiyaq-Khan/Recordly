@@ -2204,6 +2204,18 @@ export class ModernVideoExporter {
 					};
 				}
 
+				if (
+					this.config.dubbingTrack?.isActive &&
+					this.config.dubbingTrack.dubbedAudioPath &&
+					(this.config.audioRegions ?? []).length === 0
+				) {
+					return {
+						audioMode: audioPlan.audioMode,
+						audioSourcePath: this.config.dubbingTrack.dubbedAudioPath,
+						editedTrackStrategy: audioPlan.strategy,
+					};
+				}
+
 				const renderedAudio = await this.renderEditedAudioForNativeMux(
 					"Native static-layout edited audio rendering",
 					(progress) =>
@@ -2213,6 +2225,11 @@ export class ModernVideoExporter {
 
 				return {
 					audioMode: audioPlan.audioMode,
+					audioSourcePath:
+						this.config.dubbingTrack?.isActive &&
+						this.config.dubbingTrack.dubbedAudioPath
+							? this.config.dubbingTrack.dubbedAudioPath
+							: undefined,
 					editedTrackStrategy: audioPlan.strategy,
 					...renderedAudio,
 				};

@@ -380,20 +380,60 @@ export async function saveLiveVoiceReference(
 export async function transcribeVoiceReferenceSample(
 	options: TranscribeAudioSampleOptions,
 ): Promise<TranscribeAudioSampleResult> {
+	let normalizedWavPath: string | null = null;
 	try {
 		if (!options.audioPath) {
 			return { success: false, error: "No audio path provided" };
 		}
-		const transcript = await transcribeAudioFile(options);
+		await fs.access(options.audioPath);
+
+		// Pre-convert to 16kHz mono 16-bit PCM WAV to guarantee whisper.cpp compatibility
+		const ffmpegPath = getFfmpegBinaryPath();
+		normalizedWavPath = path.join(
+			DUBBING_CACHE_DIR,
+			`whisper_norm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.wav`,
+		);
+		await fs.mkdir(DUBBING_CACHE_DIR, { recursive: true });
+		await execFileAsync(ffmpegPath, [
+			"-y",
+			"-i",
+			path.resolve(options.audioPath),
+			"-vn",
+			"-ac",
+			"1",
+			"-ar",
+			"16000",
+			"-c:a",
+			"pcm_s16le",
+			normalizedWavPath,
+		]);
+
+		const transcript = await transcribeAudioFile({
+			...options,
+			audioPath: normalizedWavPath,
+		});
 		return {
 			success: true,
 			transcript,
 		};
 	} catch (error) {
-		console.error("Failed to transcribe voice reference sample:", error);
+		const errMsg = error instanceof Error ? error.message : String(error);
+		const isModelMissing =
+			errMsg.includes("Whisper model not downloaded") ||
+			errMsg.includes("ggml-small.bin") ||
+			errMsg.includes("ENOENT");
+		console.warn("Failed to transcribe voice reference sample:", error);
 		return {
 			success: false,
-			error: error instanceof Error ? error.message : String(error),
+			modelMissing: isModelMissing,
+			error: isModelMissing
+				? "Whisper model not downloaded. You can enter or edit the transcript manually."
+				: errMsg,
 		};
+	} finally {
+		if (normalizedWavPath) {
+			await fs.rm(normalizedWavPath, { force: true }).catch(() => undefined);
+		}
 	}
 }
+

@@ -496,24 +496,26 @@ export function DubbingPanel({
 					<div className="flex flex-col gap-3 pt-1">
 						{selectedQuantStatus.exists && !isSwitchingTranslationQuant ? (
 							<div className="rounded-xl border border-border/80 bg-card p-3 flex flex-col gap-2.5">
-								<div className="flex items-center justify-between">
-									<div className="flex items-center gap-2">
-										<span className="size-2 rounded-full bg-emerald-500" />
-										<span className="text-xs font-semibold text-foreground">
+								<div className="flex items-center justify-between gap-2">
+									<div className="flex items-center gap-2 min-w-0">
+										<span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+										<span className="text-xs font-semibold text-foreground truncate">
 											NLLB-200 (
 											{QUANTIZATION_OPTIONS.find((o) => o.id === translationQuantization)?.name ??
 												translationQuantization.toUpperCase()}
 											)
 										</span>
-										<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none">
+									</div>
+									<div className="flex items-center gap-1.5 shrink-0">
+										<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none whitespace-nowrap shrink-0">
 											Installed & Ready
 										</span>
+										<span className="font-mono text-[11px] text-muted-foreground shrink-0">
+											{QUANTIZATION_OPTIONS.find((o) => o.id === translationQuantization)?.size}
+										</span>
 									</div>
-									<span className="font-mono text-[11px] text-muted-foreground">
-										{QUANTIZATION_OPTIONS.find((o) => o.id === translationQuantization)?.size}
-									</span>
 								</div>
-								<p className="text-[11px] text-muted-foreground leading-relaxed">
+								<p className="text-xs text-muted-foreground leading-relaxed">
 									Offline neural translation model • Ready for high-quality multilingual dubbing
 								</p>
 								<div className="flex items-center justify-between pt-1 border-t border-border/40">
@@ -908,21 +910,23 @@ export function DubbingPanel({
 							if (isInstalled && !isSwitchingTtsQuant) {
 								return (
 									<div className="rounded-xl border border-border/80 bg-card p-3 flex flex-col gap-2.5">
-										<div className="flex items-center justify-between">
-											<div className="flex items-center gap-2">
-												<span className="size-2 rounded-full bg-emerald-500" />
-												<span className="text-xs font-semibold text-foreground">
+										<div className="flex items-center justify-between gap-2">
+											<div className="flex items-center gap-2 min-w-0">
+												<span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+												<span className="text-xs font-semibold text-foreground truncate">
 													S2-Pro ({currentOption.name})
 												</span>
-												<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none">
+											</div>
+											<div className="flex items-center gap-1.5 shrink-0">
+												<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none whitespace-nowrap shrink-0">
 													Installed & Ready
 												</span>
+												<span className="font-mono text-[11px] text-muted-foreground shrink-0">
+													{currentOption.size}
+												</span>
 											</div>
-											<span className="font-mono text-[11px] text-muted-foreground">
-												{currentOption.size}
-											</span>
 										</div>
-										<p className="text-[11px] text-muted-foreground leading-relaxed">
+										<p className="text-xs text-muted-foreground leading-relaxed">
 											Zero-shot cloning engine • {currentOption.size} • Ready offline
 										</p>
 										<div className="flex items-center justify-between pt-1 border-t border-border/40">

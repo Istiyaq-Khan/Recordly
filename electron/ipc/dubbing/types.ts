@@ -73,7 +73,9 @@ export interface TranscribeAudioSampleResult {
 	success: boolean;
 	transcript?: string;
 	error?: string;
+	modelMissing?: boolean;
 }
+
 
 export interface TranslateOptions {
 	textCues: Array<{ id: string; text: string }>;

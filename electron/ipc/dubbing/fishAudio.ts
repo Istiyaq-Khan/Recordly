@@ -682,6 +682,7 @@ export async function synthesizeAudioWithApi(
 			}
 
 			const durationMs = await probeAudioDurationMs(finalOutputPath);
+			await rememberApprovedLocalReadPath(finalOutputPath);
 
 			return {
 				success: true,
@@ -796,21 +797,9 @@ export async function synthesizeAudioWithLocalEngine(
 			]);
 			await fs.rm(rawSpeechWav, { force: true }).catch(() => undefined);
 		} else {
-			// Clean audio synthesis fallback matching text length without looping reference voice
-			await execFileAsync(ffmpegPath, [
-				"-y",
-				"-f",
-				"lavfi",
-				"-i",
-				`sine=frequency=220:duration=${estimatedDurationSec.toFixed(3)}`,
-				"-filter_complex",
-				"[0:a]aresample=24000,highpass=f=80,lowpass=f=7500,volume=0.9[outa]",
-				"-map",
-				"[outa]",
-				"-c:a",
-				"pcm_s16le",
-				outputPath,
-			]);
+			throw new Error(
+				`Failed to synthesize speech for text: "${text.slice(0, 40)}...". Please ensure your TTS provider/model is properly configured.`,
+			);
 		}
 
 		// Apply time padding and timeline cue alignment if duration parameters were provided
@@ -823,6 +812,7 @@ export async function synthesizeAudioWithLocalEngine(
 		}
 
 		const durationMs = await probeAudioDurationMs(finalOutputPath);
+		await rememberApprovedLocalReadPath(finalOutputPath);
 
 		return {
 			success: true,
@@ -978,8 +968,6 @@ async function synthesizeSingleSegmentAudio(
 	// Local Engine fallback
 	const rawSpeechWav = `${outputPath}.raw.wav`;
 	let speechGenerated = false;
-	const words = text.trim().split(/\s+/).filter(Boolean);
-	const estimatedDurationSec = Math.max(1.0, words.length * 0.42);
 
 	if (process.platform === "win32") {
 		try {
@@ -1029,20 +1017,9 @@ async function synthesizeSingleSegmentAudio(
 		]);
 		await fs.rm(rawSpeechWav, { force: true }).catch(() => undefined);
 	} else {
-		await execFileTracked(options.ffmpegPath, [
-			"-y",
-			"-f",
-			"lavfi",
-			"-i",
-			`sine=frequency=220:duration=${estimatedDurationSec.toFixed(3)}`,
-			"-filter_complex",
-			"[0:a]aresample=48000,highpass=f=80,lowpass=f=7500,volume=0.9[outa]",
-			"-map",
-			"[outa]",
-			"-c:a",
-			"pcm_s16le",
-			outputPath,
-		]);
+		throw new Error(
+			`Failed to synthesize speech for cue text: "${text.slice(0, 40)}...". Please ensure your TTS provider/model is properly configured.`,
+		);
 	}
 }
 
