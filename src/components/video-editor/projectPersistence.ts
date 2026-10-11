@@ -1103,6 +1103,35 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 				}),
 			);
 
+			const originalCaptions = Array.isArray(raw.originalCaptions)
+				? raw.originalCaptions
+						.filter(
+							(c: any) =>
+								c &&
+								isFiniteNumber(
+									c.startMs ?? (c.start !== undefined ? c.start * 1000 : undefined),
+								) &&
+								isFiniteNumber(
+									c.endMs ?? (c.end !== undefined ? c.end * 1000 : undefined),
+								) &&
+								typeof c.text === "string",
+						)
+						.map((c: any, index: number) => {
+							const startMs = Math.round(
+								c.startMs !== undefined ? c.startMs : c.start * 1000,
+							);
+							const endMs = Math.round(
+								c.endMs !== undefined ? c.endMs : c.end * 1000,
+							);
+							return {
+								id: typeof c.id === "string" ? c.id : `orig-cue-${index}`,
+								startMs: Math.max(0, startMs),
+								endMs: Math.max(startMs, endMs),
+								text: c.text.trim(),
+							};
+						})
+				: undefined;
+
 			return {
 				id: raw.id,
 				targetLanguage,
@@ -1122,6 +1151,7 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 				volume: isFiniteNumber(raw.volume) ? clamp(raw.volume, 0, 1) : 1,
 				syncedCaptions,
 				syncedCues,
+				originalCaptions,
 			};
 		})(),
 	};

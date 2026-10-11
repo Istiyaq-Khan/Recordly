@@ -18,6 +18,7 @@ vi.mock("./storage", () => ({
 import {
 	cancelTtsModelDownload,
 	checkLocalDubbingEngineStatus,
+	deleteTtsModel,
 	FISH_TTS_MODEL_CONFIGS,
 	FISH_TTS_TOKENIZER_CONFIG,
 	getTtsModelPath,
@@ -59,6 +60,11 @@ describe("Fish Audio S2-Pro Engine", () => {
 		const res = await cancelTtsModelDownload();
 		expect(res.success).toBe(true);
 		expect(res.canceled).toBe(false);
+	});
+
+	it("handles model deletion safely", async () => {
+		const res = await deleteTtsModel("q5_k_m");
+		expect(res.success).toBe(true);
 	});
 
 	it("returns model status indicating existence state", async () => {

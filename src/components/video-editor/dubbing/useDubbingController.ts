@@ -20,6 +20,8 @@ interface UseDubbingControllerParams {
 	setDubbingTrack: (
 		track: DubbingTrack | null | ((prev: DubbingTrack | null) => DubbingTrack | null),
 	) => void;
+	setAutoCaptions?: (cues: CaptionCue[]) => void;
+	duration?: number;
 	whisperExecutablePath?: string | null;
 	whisperModelPath?: string | null;
 }
@@ -30,6 +32,7 @@ export type DubbingGenerationStage =
 	| "translating"
 	| "synthesizing"
 	| "aligning"
+	| "finalizing"
 	| "ready"
 	| "error";
 
@@ -46,6 +49,8 @@ export function useDubbingController({
 	cues,
 	dubbingTrack,
 	setDubbingTrack,
+	setAutoCaptions,
+	duration,
 	whisperExecutablePath,
 	whisperModelPath,
 }: UseDubbingControllerParams) {
@@ -408,6 +413,65 @@ export function useDubbingController({
 		}
 	}, []);
 
+	// Delete translation model
+	const handleDeleteTranslationModel = useCallback(
+		async (quant?: DubbingModelQuantization) => {
+			const targetQuant = quant ?? translationQuantization;
+			if (!window.electronAPI?.deleteTranslationModel) return;
+			try {
+				const res = await window.electronAPI.deleteTranslationModel(targetQuant);
+				if (res.success) {
+					setModelStatusByQuantization((prev) => ({
+						...prev,
+						[targetQuant]: {
+							exists: false,
+							isDownloading: false,
+							progress: 0,
+							path: null,
+						},
+					}));
+					toast.success(`${targetQuant.toUpperCase()} translation model deleted`);
+				} else {
+					toast.error(res.error ?? `Failed to delete ${targetQuant.toUpperCase()} model`);
+				}
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : "Failed to delete translation model";
+				toast.error(msg);
+			}
+		},
+		[translationQuantization],
+	);
+
+	// Delete Fish Audio TTS model
+	const handleDeleteTtsModel = useCallback(
+		async (quant?: TtsQuantization) => {
+			const targetQuant = quant ?? ttsQuantization;
+			if (!window.electronAPI?.deleteTtsModel) return;
+			try {
+				const res = await window.electronAPI.deleteTtsModel(targetQuant);
+				if (res.success) {
+					setTtsModelStatusByQuantization((prev) => ({
+						...prev,
+						[targetQuant]: {
+							exists: false,
+							isDownloading: false,
+							progress: 0,
+							path: null,
+							downloadedBytes: 0,
+						},
+					}));
+					toast.success(`${targetQuant.toUpperCase()} voice model deleted`);
+				} else {
+					toast.error(res.error ?? `Failed to delete ${targetQuant.toUpperCase()} voice model`);
+				}
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : "Failed to delete voice model";
+				toast.error(msg);
+			}
+		},
+		[ttsQuantization],
+	);
+
 	// Extract reference voice sample from current recording (timeline slice)
 	const handleExtractReference = useCallback(async () => {
 		if (!videoPath) {
@@ -654,7 +718,7 @@ export function useDubbingController({
 
 		setGenerationError(null);
 		setGenerationStage("extracting-ref");
-		setGenerationProgress(10);
+		setGenerationProgress(5);
 
 		try {
 			// 1. Ensure reference voice sample exists
@@ -681,9 +745,9 @@ export function useDubbingController({
 				setReferenceDurationSec(refRes.durationMs ? refRes.durationMs / 1000 : 0);
 			}
 
-			// 2. Translate transcript to target language
+			// Stage 1: Translating Captions... (0% – 25%)
 			setGenerationStage("translating");
-			setGenerationProgress(30);
+			setGenerationProgress(15);
 
 			const textCues = cues.map((cue) => ({
 				id: cue.id,
@@ -711,13 +775,20 @@ export function useDubbingController({
 
 			const translatedCues = translateRes.translatedCues;
 			const fullTranslatedText = translatedCues.map((c) => c.text).join(" ");
+			setGenerationProgress(25);
 
-			// 3. Synthesize Dubbed Audio (Fish Audio S2-Pro Zero-Shot Voice Cloning)
+			// Stage 2: Synthesizing Voice... (25% – 70%)
 			setGenerationStage("synthesizing");
-			setGenerationProgress(65);
+			setGenerationProgress(35);
 
 			let synthAudioPath: string | undefined;
 			let synthDurationSec: number | undefined;
+
+			const cueStartMs = cues[0]?.startMs ?? 0;
+			const totalDurationMs =
+				duration && duration > 0
+					? Math.round(duration * 1000)
+					: cues[cues.length - 1]?.endMs ?? 0;
 
 			if (ttsBackend === "cloud") {
 				const synthRes = await window.electronAPI.synthesizeDubbedAudioApi({
@@ -726,6 +797,8 @@ export function useDubbingController({
 					referenceTranscript: currentRefTranscript,
 					provider: cloudProvider,
 					targetLanguage,
+					cueStartMs,
+					totalDurationMs,
 				});
 
 				if (!synthRes.success || !synthRes.dubbedAudioPath) {
@@ -740,6 +813,8 @@ export function useDubbingController({
 					referenceTranscript: currentRefTranscript,
 					targetLanguage,
 					quantization: ttsQuantization,
+					cueStartMs,
+					totalDurationMs,
 				});
 
 				if (!synthRes.success || !synthRes.dubbedAudioPath) {
@@ -748,10 +823,11 @@ export function useDubbingController({
 				synthAudioPath = synthRes.dubbedAudioPath;
 				synthDurationSec = synthRes.durationMs ? synthRes.durationMs / 1000 : undefined;
 			}
+			setGenerationProgress(70);
 
-			// 4. Align Captions with Synthesized Audio
+			// Stage 3: Aligning Captions... (70% – 95%)
 			setGenerationStage("aligning");
-			setGenerationProgress(85);
+			setGenerationProgress(75);
 
 			let alignedCues: DubbingSyncedCaptionCue[] = [];
 			if (synthAudioPath) {
@@ -796,22 +872,42 @@ export function useDubbingController({
 					};
 				});
 			}
+			setGenerationProgress(95);
 
-			// 5. Build and set DubbingTrack on timeline
+			// Stage 4: Finalizing Track... (95% – 100%)
+			setGenerationStage("finalizing");
+			setGenerationProgress(98);
+
+			// Build and set DubbingTrack on timeline with original captions preserved
 			const newDubbingTrack: DubbingTrack = {
 				id: `dubbing-${Date.now()}`,
 				targetLanguage,
 				language: targetLanguage,
 				dubbedAudioPath: synthAudioPath ?? "",
 				audioPath: synthAudioPath ?? "",
+				referenceVoiceSamplePath: currentRefPath,
+				referenceTranscript: currentRefTranscript,
 				volume: dubbingTrack?.volume ?? 1,
 				isActive: true,
 				durationSec: synthDurationSec,
 				syncedCaptions: alignedCues,
 				syncedCues: alignedCues,
+				originalCaptions: cues,
 			};
 
 			setDubbingTrack(newDubbingTrack);
+
+			// Automatically swap timeline subtitles to translated target language
+			if (setAutoCaptions) {
+				const captionCues: CaptionCue[] = alignedCues.map((c, idx) => ({
+					id: c.id ?? `dubcue-${idx}`,
+					startMs: c.startMs ?? Math.round(c.start * 1000),
+					endMs: c.endMs ?? Math.round(c.end * 1000),
+					text: c.text,
+				}));
+				setAutoCaptions(captionCues);
+			}
+
 			setGenerationStage("ready");
 			setGenerationProgress(100);
 			toast.success("AI Dubbing generated and synced to timeline!");
@@ -824,6 +920,7 @@ export function useDubbingController({
 	}, [
 		videoPath,
 		cues,
+		duration,
 		referenceAudioPath,
 		referenceTranscript,
 		targetLanguage,
@@ -832,19 +929,42 @@ export function useDubbingController({
 		apiTranslationProvider,
 		ttsBackend,
 		cloudProvider,
+		ttsQuantization,
 		whisperExecutablePath,
 		whisperModelPath,
 		dubbingTrack,
 		setDubbingTrack,
+		setAutoCaptions,
+		customOpenAiConfig,
 	]);
 
 	// Audio Track Toggle Controls
 	const handleToggleActiveTrack = useCallback(() => {
 		setDubbingTrack((current) => {
 			if (!current) return null;
-			return { ...current, isActive: !current.isActive };
+			const nextActive = !current.isActive;
+			if (setAutoCaptions) {
+				if (nextActive) {
+					const dubbed = current.syncedCaptions ?? current.syncedCues ?? [];
+					if (dubbed.length > 0) {
+						setAutoCaptions(
+							dubbed.map((c, idx) => ({
+								id: c.id ?? `dubcue-${idx}`,
+								startMs: c.startMs ?? Math.round(c.start * 1000),
+								endMs: c.endMs ?? Math.round(c.end * 1000),
+								text: c.text,
+							})),
+						);
+					}
+				} else {
+					if (current.originalCaptions && current.originalCaptions.length > 0) {
+						setAutoCaptions(current.originalCaptions);
+					}
+				}
+			}
+			return { ...current, isActive: nextActive };
 		});
-	}, [setDubbingTrack]);
+	}, [setDubbingTrack, setAutoCaptions]);
 
 	const handleSetVolume = useCallback(
 		(volume: number) => {
@@ -857,10 +977,18 @@ export function useDubbingController({
 	);
 
 	const handleRemoveDubbedTrack = useCallback(() => {
+		if (
+			setAutoCaptions &&
+			dubbingTrack?.originalCaptions &&
+			dubbingTrack.originalCaptions.length > 0
+		) {
+			setAutoCaptions(dubbingTrack.originalCaptions);
+		}
 		setDubbingTrack(null);
 		setGenerationStage("idle");
 		setGenerationProgress(0);
-	}, [setDubbingTrack]);
+		toast.info("Dubbed track removed from timeline");
+	}, [dubbingTrack, setDubbingTrack, setAutoCaptions]);
 
 	return {
 		// Preferences & Configurations
@@ -890,6 +1018,7 @@ export function useDubbingController({
 		// Local Quantized Models
 		modelStatusByQuantization,
 		handleDownloadModel,
+		handleDeleteTranslationModel,
 		checkModelStatus,
 
 		// Fish Audio S2-Pro Local Engine
@@ -897,6 +1026,7 @@ export function useDubbingController({
 		updateTtsQuantization,
 		ttsModelStatusByQuantization,
 		handleDownloadTtsModel,
+		handleDeleteTtsModel,
 		handleCancelTtsModelDownload,
 		checkTtsModelStatus,
 

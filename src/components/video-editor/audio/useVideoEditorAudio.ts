@@ -118,6 +118,7 @@ export function useVideoEditorAudio({
 		setSourceAudioTrackSettingsByClip,
 		defaultSourceAudioTrackSettings,
 		setDefaultSourceAudioTrackSettings,
+		dubbingTrack,
 	});
 
 	const { playSourceAudioPreview } = useAudioPreviewSync({
@@ -134,6 +135,7 @@ export function useVideoEditorAudio({
 		isCurrentClipMuted,
 		getSourceTrackPreviewGain,
 		onSourceFallbackLoadError,
+		dubbingTrack,
 	});
 
 	return {

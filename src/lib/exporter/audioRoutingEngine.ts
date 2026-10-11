@@ -64,9 +64,27 @@ export function buildResolvedAudioPlan(input: {
 		}
 	}
 
-	const isDubbingActive = Boolean(
-		input.dubbingTrack?.isActive && input.dubbingTrack.dubbedAudioPath,
+	const rawDubbedAudioPath = input.dubbingTrack?.dubbedAudioPath?.trim();
+	const refSamplePath = input.dubbingTrack?.referenceVoiceSamplePath?.trim();
+	const isDubbingPathValid = Boolean(
+		rawDubbedAudioPath &&
+			rawDubbedAudioPath.length > 0 &&
+			(!refSamplePath || rawDubbedAudioPath !== refSamplePath),
 	);
+
+	if (input.dubbingTrack?.isActive && !isDubbingPathValid) {
+		if (!rawDubbedAudioPath) {
+			console.warn(
+				"[audioRoutingEngine] Assertion failed: dubbedAudioPath is empty on active dubbing track.",
+			);
+		} else if (refSamplePath && rawDubbedAudioPath === refSamplePath) {
+			console.error(
+				"[audioRoutingEngine] Assertion failed: dubbedAudioPath cannot point to referenceVoiceSamplePath. Discarding dubbed track to prevent reference loop.",
+			);
+		}
+	}
+
+	const isDubbingActive = Boolean(input.dubbingTrack?.isActive && isDubbingPathValid);
 	const hasDedicatedTracks = Boolean(
 		pathsByTrack.system || pathsByTrack.mic || isDubbingActive,
 	);
@@ -74,8 +92,8 @@ export function buildResolvedAudioPlan(input: {
 	if (pathsByTrack.system) playbackPaths.push(pathsByTrack.system);
 
 	// If dubbing is active, replace original mic track with dubbed audio track
-	if (isDubbingActive && input.dubbingTrack?.dubbedAudioPath) {
-		playbackPaths.push(input.dubbingTrack.dubbedAudioPath);
+	if (isDubbingActive && rawDubbedAudioPath) {
+		playbackPaths.push(rawDubbedAudioPath);
 	} else if (pathsByTrack.mic) {
 		playbackPaths.push(pathsByTrack.mic);
 	}

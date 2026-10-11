@@ -3,6 +3,7 @@ import { alignDubbedCaptions } from "../dubbing/captionAlignment";
 import {
 	cancelTtsModelDownload,
 	checkLocalDubbingEngineStatus,
+	deleteTtsModel,
 	downloadTtsModelWithProgress,
 	getTtsModelStatus,
 	synthesizeAudioWithApi,
@@ -22,6 +23,7 @@ import {
 	saveSecureApiKey,
 } from "../dubbing/storage";
 import {
+	deleteTranslationModel,
 	downloadTranslationModel,
 	getTranslationModelStatus,
 	translateTranscript,
@@ -93,6 +95,13 @@ export function registerDubbingHandlers() {
 	);
 
 	ipcMain.handle(
+		"dubbing:delete-translation-model",
+		async (_, quantization?: DubbingModelQuantization) => {
+			return await deleteTranslationModel(quantization ?? "int8");
+		},
+	);
+
+	ipcMain.handle(
 		"dubbing:get-tts-model-status",
 		async (_, quantization?: TtsQuantization) => {
 			return await getTtsModelStatus(quantization ?? "q4_k_m");
@@ -123,6 +132,13 @@ export function registerDubbingHandlers() {
 			return { success: false, error: String(error) };
 		}
 	});
+
+	ipcMain.handle(
+		"dubbing:delete-tts-model",
+		async (_, quantization?: TtsQuantization) => {
+			return await deleteTtsModel(quantization ?? "q4_k_m");
+		},
+	);
 
 	ipcMain.handle(
 		"dubbing:extract-voice-reference",

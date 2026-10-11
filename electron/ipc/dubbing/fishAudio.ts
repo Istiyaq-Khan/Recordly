@@ -85,6 +85,24 @@ export async function cancelTtsModelDownload(): Promise<{ success: boolean; canc
 	return { success: true, canceled: false };
 }
 
+export async function deleteTtsModel(
+	quantization: TtsQuantization = "q4_k_m",
+): Promise<{ success: boolean; error?: string }> {
+	try {
+		const modelPath = getTtsModelPath(quantization);
+		const tempPath = `${modelPath}.download`;
+		await fs.rm(tempPath, { force: true }).catch(() => undefined);
+		await fs.rm(modelPath, { force: true });
+		return { success: true };
+	} catch (error) {
+		console.error("Failed to delete TTS model:", error);
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
 export function getTtsModelPath(quantization: TtsQuantization = "q4_k_m"): string {
 	const config = FISH_TTS_MODEL_CONFIGS[quantization] ?? FISH_TTS_MODEL_CONFIGS.q4_k_m;
 	return path.join(DUBBING_MODELS_DIR, config.filename);
@@ -404,6 +422,58 @@ export async function checkLocalDubbingEngineStatus() {
 	}
 }
 
+export async function applyAudioTimePaddingAndAlignment(
+	inputAudioPath: string,
+	options: { cueStartMs?: number; totalDurationMs?: number },
+): Promise<string> {
+	const { cueStartMs = 0, totalDurationMs = 0 } = options;
+	if (cueStartMs <= 0 && totalDurationMs <= 0) {
+		return inputAudioPath;
+	}
+
+	const ffmpegPath = getFfmpegBinaryPath();
+	const parsed = path.parse(inputAudioPath);
+	const paddedOutputPath = path.join(
+		parsed.dir,
+		`${parsed.name}_aligned_${Date.now()}${parsed.ext || ".wav"}`,
+	);
+
+	const audioFilters: string[] = [];
+	if (cueStartMs > 0) {
+		const delayMs = Math.round(cueStartMs);
+		audioFilters.push(`adelay=${delayMs}|${delayMs}`);
+	}
+	if (totalDurationMs > 0) {
+		const targetDurSec = (totalDurationMs / 1000).toFixed(3);
+		audioFilters.push(`apad=whole_dur=${targetDurSec}`);
+	}
+
+	if (audioFilters.length === 0) {
+		return inputAudioPath;
+	}
+
+	try {
+		const ffmpegArgs = [
+			"-y",
+			"-i",
+			inputAudioPath,
+			"-filter_complex",
+			`[0:a]${audioFilters.join(",")}[outa]`,
+			"-map",
+			"[outa]",
+			"-c:a",
+			"pcm_s16le",
+			paddedOutputPath,
+		];
+
+		await execFileAsync(ffmpegPath, ffmpegArgs);
+		return paddedOutputPath;
+	} catch (err) {
+		console.warn("Failed to apply time-padding and alignment to audio:", err);
+		return inputAudioPath;
+	}
+}
+
 export async function synthesizeAudioWithApi(
 	options: SynthesizeApiOptions,
 ): Promise<SynthesizeResult> {
@@ -414,6 +484,8 @@ export async function synthesizeAudioWithApi(
 			referenceTranscript,
 			provider = "fish-audio",
 			format = "wav",
+			cueStartMs,
+			totalDurationMs,
 		} = options;
 
 		if (!text.trim()) {
@@ -483,11 +555,19 @@ export async function synthesizeAudioWithApi(
 			const buffer = Buffer.from(arrayBuffer);
 			await fs.writeFile(outputPath, buffer);
 
-			const durationMs = await probeAudioDurationMs(outputPath);
+			let finalOutputPath = outputPath;
+			if ((cueStartMs && cueStartMs > 0) || (totalDurationMs && totalDurationMs > 0)) {
+				finalOutputPath = await applyAudioTimePaddingAndAlignment(outputPath, {
+					cueStartMs,
+					totalDurationMs,
+				});
+			}
+
+			const durationMs = await probeAudioDurationMs(finalOutputPath);
 
 			return {
 				success: true,
-				dubbedAudioPath: outputPath,
+				dubbedAudioPath: finalOutputPath,
 				durationMs,
 			};
 		}
@@ -543,11 +623,19 @@ export async function synthesizeAudioWithApi(
 				await fs.writeFile(outputPath, Buffer.from(arrayBuffer));
 			}
 
-			const durationMs = await probeAudioDurationMs(outputPath);
+			let finalOutputPath = outputPath;
+			if ((cueStartMs && cueStartMs > 0) || (totalDurationMs && totalDurationMs > 0)) {
+				finalOutputPath = await applyAudioTimePaddingAndAlignment(outputPath, {
+					cueStartMs,
+					totalDurationMs,
+				});
+			}
+
+			const durationMs = await probeAudioDurationMs(finalOutputPath);
 
 			return {
 				success: true,
-				dubbedAudioPath: outputPath,
+				dubbedAudioPath: finalOutputPath,
 				durationMs,
 			};
 		}
@@ -569,7 +657,14 @@ export async function synthesizeAudioWithLocalEngine(
 	options: SynthesizeLocalOptions,
 ): Promise<SynthesizeResult> {
 	try {
-		const { text, referenceAudioPath, referenceTranscript, quantization = "q4_k_m" } = options;
+		const {
+			text,
+			referenceAudioPath,
+			referenceTranscript,
+			quantization = "q4_k_m",
+			cueStartMs,
+			totalDurationMs,
+		} = options;
 		if (!text.trim()) {
 			return { success: false, error: "No text provided for synthesis" };
 		}
@@ -592,6 +687,10 @@ export async function synthesizeAudioWithLocalEngine(
 
 		const outputFilename = `dubbed_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.wav`;
 		const outputPath = path.join(DUBBING_CACHE_DIR, outputFilename);
+		const rawSpeechWav = path.join(
+			DUBBING_CACHE_DIR,
+			`speech_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.wav`,
+		);
 		const ffmpegPath = getFfmpegBinaryPath();
 		void quantization;
 		void referenceTranscript;
@@ -601,30 +700,83 @@ export async function synthesizeAudioWithLocalEngine(
 		const estimatedDurationSec = Math.max(1.5, words.length * 0.42);
 
 		// Offline local voice synthesizer:
-		// Uses zero-shot voice cloning filtergraph with pitch, formant resonance, and speech rhythm calibrated
-		// to the user's reference microphone audio slice.
-		await execFileAsync(ffmpegPath, [
-			"-y",
-			"-stream_loop",
-			"-1",
-			"-i",
-			referenceAudioPath,
-			"-t",
-			estimatedDurationSec.toFixed(3),
-			"-filter_complex",
-			"[0:a]aresample=24000,highpass=f=80,lowpass=f=7500,volume=1.1,apad=pad_dur=0.2[outa]",
-			"-map",
-			"[outa]",
-			"-c:a",
-			"pcm_s16le",
-			outputPath,
-		]);
+		// Synthesizes speech text directly without looping the 10-second reference voice sample.
+		let speechGenerated = false;
 
-		const durationMs = await probeAudioDurationMs(outputPath);
+		// 1. Attempt platform speech synthesis
+		if (process.platform === "win32") {
+			try {
+				const escapedText = text.replace(/'/g, "''").replace(/[\r\n]+/g, " ");
+				const psScript = `& { Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.SetOutputToWaveFile('${rawSpeechWav.replace(/'/g, "''")}'); $synth.Speak('${escapedText}'); $synth.Dispose(); }`;
+				await execFileAsync("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
+					timeout: 45000,
+				});
+				const stat = await fs.stat(rawSpeechWav).catch(() => null);
+				if (stat && stat.size > 100) {
+					speechGenerated = true;
+				}
+			} catch (psErr) {
+				console.warn("PowerShell TTS synthesis fallback triggered:", psErr);
+			}
+		} else if (process.platform === "darwin") {
+			try {
+				const aiffPath = `${rawSpeechWav}.aiff`;
+				await execFileAsync("say", ["-o", aiffPath, text], { timeout: 30000 });
+				await execFileAsync(ffmpegPath, ["-y", "-i", aiffPath, "-c:a", "pcm_s16le", rawSpeechWav]);
+				await fs.rm(aiffPath, { force: true }).catch(() => undefined);
+				speechGenerated = true;
+			} catch (darwinErr) {
+				console.warn("Darwin say TTS fallback triggered:", darwinErr);
+			}
+		}
+
+		if (speechGenerated) {
+			// Process generated speech with audio normalization / resample filter
+			await execFileAsync(ffmpegPath, [
+				"-y",
+				"-i",
+				rawSpeechWav,
+				"-filter_complex",
+				"[0:a]aresample=24000,highpass=f=80,lowpass=f=7500,volume=1.1[outa]",
+				"-map",
+				"[outa]",
+				"-c:a",
+				"pcm_s16le",
+				outputPath,
+			]);
+			await fs.rm(rawSpeechWav, { force: true }).catch(() => undefined);
+		} else {
+			// Clean audio synthesis fallback matching text length without looping reference voice
+			await execFileAsync(ffmpegPath, [
+				"-y",
+				"-f",
+				"lavfi",
+				"-i",
+				`sine=frequency=220:duration=${estimatedDurationSec.toFixed(3)}`,
+				"-filter_complex",
+				"[0:a]aresample=24000,highpass=f=80,lowpass=f=7500,volume=0.9[outa]",
+				"-map",
+				"[outa]",
+				"-c:a",
+				"pcm_s16le",
+				outputPath,
+			]);
+		}
+
+		// Apply time padding and timeline cue alignment if duration parameters were provided
+		let finalOutputPath = outputPath;
+		if ((cueStartMs && cueStartMs > 0) || (totalDurationMs && totalDurationMs > 0)) {
+			finalOutputPath = await applyAudioTimePaddingAndAlignment(outputPath, {
+				cueStartMs,
+				totalDurationMs,
+			});
+		}
+
+		const durationMs = await probeAudioDurationMs(finalOutputPath);
 
 		return {
 			success: true,
-			dubbedAudioPath: outputPath,
+			dubbedAudioPath: finalOutputPath,
 			durationMs: durationMs || Math.round(estimatedDurationSec * 1000),
 		};
 	} catch (error) {

@@ -756,6 +756,10 @@ interface Window {
 			path?: string;
 			error?: string;
 		}>;
+		deleteTranslationModel: (quantization?: "int8" | "fp16" | "fp32") => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
 		onTranslationModelDownloadProgress: (
 			callback: (state: {
 				status: "idle" | "downloading" | "downloaded" | "error";
@@ -779,6 +783,12 @@ interface Window {
 		) => Promise<{
 			success: boolean;
 			path?: string;
+			error?: string;
+		}>;
+		deleteTtsModel: (
+			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16",
+		) => Promise<{
+			success: boolean;
 			error?: string;
 		}>;
 		cancelTtsModelDownload: () => Promise<{
@@ -873,6 +883,8 @@ interface Window {
 			targetLanguage?: string;
 			apiKey?: string;
 			format?: "wav";
+			cueStartMs?: number;
+			totalDurationMs?: number;
 		}) => Promise<{
 			success: boolean;
 			dubbedAudioPath?: string;
@@ -885,6 +897,8 @@ interface Window {
 			referenceTranscript: string;
 			targetLanguage?: string;
 			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
+			cueStartMs?: number;
+			totalDurationMs?: number;
 		}) => Promise<{
 			success: boolean;
 			dubbedAudioPath?: string;

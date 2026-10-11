@@ -29,6 +29,7 @@ vi.mock("../dubbing/fishAudio", () => ({
 	synthesizeAudioWithLocalEngine: vi
 		.fn()
 		.mockResolvedValue({ success: true, dubbedAudioPath: "/out/local.wav", durationMs: 4500 }),
+	deleteTtsModel: vi.fn().mockResolvedValue({ success: true, deleted: true }),
 }));
 
 vi.mock("../dubbing/referenceAudio", () => ({
@@ -61,6 +62,7 @@ vi.mock("../dubbing/translation", () => ({
 		.fn()
 		.mockResolvedValue({ success: true, exists: true, path: "/models/int8" }),
 	downloadTranslationModel: vi.fn().mockResolvedValue({ success: true, path: "/models/int8" }),
+	deleteTranslationModel: vi.fn().mockResolvedValue({ success: true, deleted: true }),
 	translateTranscript: vi.fn().mockResolvedValue({
 		success: true,
 		translatedCues: [{ id: "c1", text: "Hola mundo" }],
@@ -90,6 +92,11 @@ describe("Dubbing IPC Handlers", () => {
 			"dubbing:get-supported-languages",
 			"dubbing:get-translation-model-status",
 			"dubbing:download-translation-model",
+			"dubbing:delete-translation-model",
+			"dubbing:get-tts-model-status",
+			"dubbing:download-tts-model",
+			"dubbing:cancel-tts-model-download",
+			"dubbing:delete-tts-model",
 			"dubbing:extract-voice-reference",
 			"dubbing:translate",
 			"dubbing:synthesize-api",
@@ -120,6 +127,26 @@ describe("Dubbing IPC Handlers", () => {
 		expect(res.success).toBe(true);
 		expect(res.exists).toBe(true);
 		expect(res.path).toBe("/models/int8");
+	});
+
+	it("handles translation model deletion request", async () => {
+		const handler = handlers.get("dubbing:delete-translation-model")!;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, "int8")) as Record<
+			string,
+			unknown
+		>;
+		expect(res.success).toBe(true);
+		expect(res.deleted).toBe(true);
+	});
+
+	it("handles tts model deletion request", async () => {
+		const handler = handlers.get("dubbing:delete-tts-model")!;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent, "q5_k_m")) as Record<
+			string,
+			unknown
+		>;
+		expect(res.success).toBe(true);
+		expect(res.deleted).toBe(true);
 	});
 
 	it("handles reference audio extraction request", async () => {

@@ -68,6 +68,23 @@ describe("Audio Routing with Dubbed Track", () => {
 		expect(plan.playbackPaths).not.toContain("/cache/dubbed_es.wav");
 	});
 
+	it("rejects routing when dubbedAudioPath matches referenceVoiceSamplePath", () => {
+		const corruptedDubbingTrack: DubbingTrack = {
+			...sampleDubbingTrack,
+			referenceVoiceSamplePath: "/cache/dubbed_es.wav", // same as dubbedAudioPath!
+		};
+
+		const plan: ResolvedAudioPlan = buildResolvedAudioPlan({
+			videoUrl: "/videos/recording.mp4",
+			sourceAudioFallbackPaths: ["/videos/recording.mic.m4a", "/videos/recording.system.wav"],
+			dubbingTrack: corruptedDubbingTrack,
+		});
+
+		// Must NOT route the looped reference track; fall back to mic
+		expect(plan.playbackPaths).not.toContain("/cache/dubbed_es.wav");
+		expect(plan.playbackPaths).toContain("/videos/recording.mic.m4a");
+	});
+
 	it("updates source track routing policy when dubbingTrack is active", () => {
 		const policy = resolveSourceTrackRoutingPolicy(
 			"/videos/recording.mp4",
@@ -81,15 +98,17 @@ describe("Audio Routing with Dubbed Track", () => {
 });
 
 describe("Project Persistence & Editor Preferences", () => {
-	it("normalizes and restores dubbingTrack in project state", () => {
+	it("normalizes and restores dubbingTrack in project state including originalCaptions", () => {
 		const rawEditorState = {
 			dubbingTrack: {
 				id: "dub-xyz",
 				targetLanguage: "fr",
 				dubbedAudioPath: "/path/to/dubbed.wav",
+				referenceVoiceSamplePath: "/path/to/ref.wav",
 				isActive: true,
 				volume: 0.9,
 				syncedCaptions: [{ start: 0, end: 1, text: "Bonjour" }],
+				originalCaptions: [{ id: "orig-1", start: 0, end: 1, text: "Hello" }],
 			},
 		};
 
@@ -98,6 +117,9 @@ describe("Project Persistence & Editor Preferences", () => {
 		expect(normalized.dubbingTrack?.targetLanguage).toBe("fr");
 		expect(normalized.dubbingTrack?.isActive).toBe(true);
 		expect(normalized.dubbingTrack?.volume).toBe(0.9);
+		expect(normalized.dubbingTrack?.originalCaptions).toEqual([
+			{ id: "orig-1", startMs: 0, endMs: 1000, text: "Hello" },
+		]);
 	});
 
 	it("persists user preferences for quantization model and translation engine", () => {

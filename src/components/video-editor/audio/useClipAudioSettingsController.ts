@@ -3,6 +3,7 @@ import {
 	SOURCE_AUDIO_NORMALIZE_GAIN,
 	type SourceAudioTrackSettings,
 } from "@/components/video-editor/audio/audioTypes";
+import type { DubbingTrack } from "@/components/video-editor/types";
 import { useSourceAudioTrackSettings } from "./useSourceAudioTrackSettings";
 import { getSourceTrackIdFromPath } from "@/lib/exporter/audioRoutingEngine";
 
@@ -17,6 +18,7 @@ interface UseClipAudioSettingsControllerParams {
 	setDefaultSourceAudioTrackSettings: React.Dispatch<
 		React.SetStateAction<SourceAudioTrackSettings>
 	>;
+	dubbingTrack?: DubbingTrack | null;
 }
 
 export function useClipAudioSettingsController({
@@ -26,6 +28,7 @@ export function useClipAudioSettingsController({
 	setSourceAudioTrackSettingsByClip,
 	defaultSourceAudioTrackSettings,
 	setDefaultSourceAudioTrackSettings,
+	dubbingTrack,
 }: UseClipAudioSettingsControllerParams) {
 	const {
 		sourceAudioTrackMeta,
@@ -68,7 +71,15 @@ export function useClipAudioSettingsController({
 
 	const getSourceTrackPreviewGain = useCallback(
 		(audioPath: string) => {
-			const trackId = getSourceTrackIdFromPath(audioPath);
+			const isDubbedTrack = Boolean(
+				dubbingTrack?.isActive &&
+					dubbingTrack.dubbedAudioPath &&
+					audioPath === dubbingTrack.dubbedAudioPath,
+			);
+			const trackId = isDubbedTrack ? "dubbing" : getSourceTrackIdFromPath(audioPath);
+			if (trackId === "dubbing") {
+				return Math.max(0, Math.min(1, dubbingTrack?.volume ?? 1));
+			}
 			const settings = previewSourceAudioTrackSettings[trackId] ?? {
 				volume: 1,
 				normalize: false,
@@ -76,7 +87,7 @@ export function useClipAudioSettingsController({
 			const normalizeGain = settings.normalize ? SOURCE_AUDIO_NORMALIZE_GAIN : 1;
 			return Math.max(0, Math.min(1, settings.volume * normalizeGain));
 		},
-		[previewSourceAudioTrackSettings],
+		[previewSourceAudioTrackSettings, dubbingTrack],
 	);
 
 	return {

@@ -117,7 +117,12 @@ export class OfflineAudioProcessor extends AudioMediaProcessor {
 			const buffer = await this.decodeAudioFromUrl(audioPath);
 			if (!buffer) continue;
 
-			const trackId = getSourceTrackIdFromPath(audioPath);
+			const isDubbedTrack = Boolean(
+				dubbingTrack?.isActive &&
+					dubbingTrack.dubbedAudioPath &&
+					audioPath === dubbingTrack.dubbedAudioPath,
+			);
+			const trackId = isDubbedTrack ? "dubbing" : getSourceTrackIdFromPath(audioPath);
 			const gain =
 				trackId === "dubbing"
 					? (dubbingTrack?.volume ?? 1)

@@ -66,6 +66,26 @@ export async function getTranslationModelStatus(quantization: DubbingModelQuanti
 	}
 }
 
+export async function deleteTranslationModel(
+	quantization: DubbingModelQuantization = "int8",
+): Promise<{ success: boolean; error?: string }> {
+	try {
+		const dir = getTranslationModelDir(quantization);
+		await fs.rm(dir, { recursive: true, force: true });
+		if (activeQuantization === quantization) {
+			activeTranslationPipeline = null;
+			activeQuantization = null;
+		}
+		return { success: true };
+	} catch (error) {
+		console.error("Failed to delete translation model:", error);
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
 export function sendTranslationModelDownloadProgress(
 	webContents: Electron.WebContents,
 	payload: {

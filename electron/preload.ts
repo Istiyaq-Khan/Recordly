@@ -789,6 +789,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	downloadTranslationModel: (quantization?: "int8" | "fp16" | "fp32") => {
 		return ipcRenderer.invoke("dubbing:download-translation-model", quantization);
 	},
+	deleteTranslationModel: (quantization?: "int8" | "fp16" | "fp32") => {
+		return ipcRenderer.invoke("dubbing:delete-translation-model", quantization);
+	},
 	onTranslationModelDownloadProgress: (
 		callback: (state: {
 			status: "idle" | "downloading" | "downloaded" | "error";
@@ -821,6 +824,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16",
 	) => {
 		return ipcRenderer.invoke("dubbing:download-tts-model", quantization);
+	},
+	deleteTtsModel: (
+		quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16",
+	) => {
+		return ipcRenderer.invoke("dubbing:delete-tts-model", quantization);
 	},
 	cancelTtsModelDownload: () => {
 		return ipcRenderer.invoke("dubbing:cancel-tts-model-download");
@@ -908,6 +916,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		targetLanguage?: string;
 		apiKey?: string;
 		format?: "wav";
+		cueStartMs?: number;
+		totalDurationMs?: number;
 	}) => {
 		return ipcRenderer.invoke("dubbing:synthesize-api", options);
 	},
@@ -917,6 +927,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		referenceTranscript: string;
 		targetLanguage?: string;
 		quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
+		cueStartMs?: number;
+		totalDurationMs?: number;
 	}) => {
 		return ipcRenderer.invoke("dubbing:synthesize-local", options);
 	},

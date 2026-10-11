@@ -16,6 +16,7 @@ vi.mock("./storage", () => ({
 
 import { getCustomOpenAiConfig, getSecureApiKey } from "./storage";
 import {
+	deleteTranslationModel,
 	getTranslationModelDir,
 	getTranslationModelFilePath,
 	getTranslationModelStatus,
@@ -45,6 +46,11 @@ describe("Translation Model Paths and Quantization", () => {
 		const status = await getTranslationModelStatus("int8");
 		expect(status.success).toBe(true);
 		expect(status.quantization).toBe("int8");
+	});
+
+	it("handles translation model deletion safely", async () => {
+		const res = await deleteTranslationModel("int8");
+		expect(res.success).toBe(true);
 	});
 });
 

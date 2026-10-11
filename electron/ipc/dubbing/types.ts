@@ -101,6 +101,8 @@ export interface SynthesizeApiOptions {
 	targetLanguage?: string;
 	apiKey?: string;
 	format?: "wav";
+	totalDurationMs?: number;
+	cueStartMs?: number;
 }
 
 export interface SynthesizeLocalOptions {
@@ -109,6 +111,8 @@ export interface SynthesizeLocalOptions {
 	referenceTranscript: string;
 	targetLanguage?: string;
 	quantization?: TtsQuantization;
+	totalDurationMs?: number;
+	cueStartMs?: number;
 }
 
 export interface SynthesizeResult {

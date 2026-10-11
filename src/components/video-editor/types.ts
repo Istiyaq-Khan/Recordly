@@ -687,6 +687,7 @@ export interface DubbingTrack {
 	durationSec?: number;
 	syncedCaptions: DubbingSyncedCaptionCue[];
 	syncedCues?: DubbingSyncedCaptionCue[];
+	originalCaptions?: CaptionCue[];
 }
 
 export type DubbingModelQuantization = "int8" | "fp16" | "fp32";

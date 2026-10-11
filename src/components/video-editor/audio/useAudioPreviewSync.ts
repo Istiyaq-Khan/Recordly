@@ -8,7 +8,7 @@ import {
 	getMediaSyncPlaybackRate,
 	resolvePreviewMediaDuration,
 } from "@/lib/mediaTiming";
-import type { AudioRegion } from "../types";
+import type { AudioRegion, DubbingTrack } from "../types";
 import { supportsPreviewPlaybackRate } from "../videoPlayback/playbackRate";
 import {
 	getAudioResourceVersionKey,
@@ -33,6 +33,7 @@ interface UseAudioPreviewSyncParams {
 	isCurrentClipMuted: boolean;
 	getSourceTrackPreviewGain: (audioPath: string) => number;
 	onSourceFallbackLoadError: (error: unknown) => void;
+	dubbingTrack?: DubbingTrack | null;
 }
 
 export function useAudioPreviewSync({
@@ -49,6 +50,7 @@ export function useAudioPreviewSync({
 	isCurrentClipMuted,
 	getSourceTrackPreviewGain,
 	onSourceFallbackLoadError,
+	dubbingTrack,
 }: UseAudioPreviewSyncParams) {
 	const resolvedPlan = useMemo(
 		() =>
@@ -56,8 +58,9 @@ export function useAudioPreviewSync({
 				videoResource: null,
 				sourceAudioFallbackPaths: previewSourceAudioFallbackPaths,
 				audioRegions,
+				dubbingTrack,
 			}),
-		[audioRegions, previewSourceAudioFallbackPaths],
+		[audioRegions, previewSourceAudioFallbackPaths, dubbingTrack],
 	);
 	const resolvedUserTracks = useMemo(
 		() => resolvedPlan.tracks.filter((track) => track.kind === "user"),

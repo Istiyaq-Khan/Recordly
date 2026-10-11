@@ -359,6 +359,8 @@ export default function VideoEditor() {
 		cues: timeline.autoCaptions,
 		dubbingTrack: timeline.dubbingTrack,
 		setDubbingTrack: timeline.setDubbingTrack,
+		setAutoCaptions: timeline.setAutoCaptions,
+		duration,
 		whisperExecutablePath,
 		whisperModelPath,
 	});

@@ -56,6 +56,8 @@ export function DubbingPanel({
 	t: _t,
 }: DubbingPanelProps) {
 	const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
+	const [isSwitchingTranslationQuant, setIsSwitchingTranslationQuant] = useState(false);
+	const [isSwitchingTtsQuant, setIsSwitchingTtsQuant] = useState(false);
 	const [apiKeyTempInputs, setApiKeyTempInputs] = useState<Record<string, string>>({
 		"fish-audio": "",
 		acedatacloud: "",
@@ -80,6 +82,7 @@ export function DubbingPanel({
 		handleSaveApiKey,
 		modelStatusByQuantization,
 		handleDownloadModel,
+		handleDeleteTranslationModel,
 		voiceSourceMode,
 		setVoiceSourceMode,
 		voiceSourceType,
@@ -104,6 +107,8 @@ export function DubbingPanel({
 		handleToggleActiveTrack,
 		handleSetVolume,
 		handleRemoveDubbedTrack,
+		handleDownloadTtsModel,
+		handleDeleteTtsModel,
 		handleCancelTtsModelDownload,
 	} = controller;
 
@@ -457,117 +462,173 @@ export function DubbingPanel({
 				{/* If Local Model NLLB Engine selected */}
 				{translationEngine === "local-nllb" && (
 					<div className="flex flex-col gap-3 pt-1">
-						<div className="flex items-center justify-between">
-							<Label className="text-[12px] font-medium">Model Quantization</Label>
-							<span className="text-[11px] text-muted-foreground">
-								Select to download
-							</span>
-						</div>
-
-						{/* Quantization options */}
-						<div className="flex flex-col gap-2">
-							{QUANTIZATION_OPTIONS.map((opt) => {
-								const isSelected = translationQuantization === opt.id;
-								const status = modelStatusByQuantization[opt.id];
-								const isInstalled = Boolean(status?.exists);
-
-								return (
-									<button
-										type="button"
-										key={opt.id}
-										onClick={() => updateTranslationQuantization(opt.id)}
-										className={cn(
-											"group relative flex flex-col gap-1.5 p-3 rounded-xl border text-left transition-all",
-											isSelected
-												? "border-primary bg-primary/[0.07] shadow-xs"
-												: "border-border/70 bg-card/40 hover:bg-card/75 hover:border-border",
-										)}
-									>
-										<div className="flex items-center justify-between gap-2 w-full">
-											<div className="flex items-center gap-2 min-w-0 flex-wrap">
-												<div
-													className={cn(
-														"size-4 shrink-0 rounded-full border flex items-center justify-center transition-colors",
-														isSelected
-															? "border-primary bg-primary"
-															: "border-muted-foreground/40 group-hover:border-muted-foreground/70",
-													)}
-												>
-													{isSelected && (
-														<span className="size-1.5 rounded-full bg-primary-foreground" />
-													)}
-												</div>
-												<span className="text-xs font-semibold text-foreground tracking-tight">
-													{opt.name}
-												</span>
-												<span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground leading-none shrink-0">
-													{opt.badge}
-												</span>
-												{isInstalled && (
-													<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none shrink-0 flex items-center gap-1">
-														<span className="size-1 rounded-full bg-emerald-500" />
-														Installed
-													</span>
-												)}
-											</div>
-											<span className="font-mono text-[11px] font-medium text-muted-foreground bg-muted/70 px-1.5 py-0.5 rounded leading-none shrink-0">
-												{opt.size}
-											</span>
-										</div>
-										<p className="pl-6 text-xs text-muted-foreground leading-relaxed">
-											{opt.description}
-										</p>
-									</button>
-								);
-							})}
-						</div>
-
-						{/* Selected Quantization Model Download & Status Card */}
-						<div className="rounded-xl border border-border/80 bg-card p-3 flex flex-col gap-2">
-							<div className="flex items-center justify-between">
-								<div className="flex items-center gap-2">
-									<span className="text-xs font-medium">
-										{translationQuantization.toUpperCase()} Model:
-									</span>
-									{selectedQuantStatus.exists ? (
-										<span className="text-[11px] text-emerald-500 font-medium">
+						{selectedQuantStatus.exists && !isSwitchingTranslationQuant ? (
+							<div className="rounded-xl border border-border/80 bg-card p-3 flex flex-col gap-2.5">
+								<div className="flex items-center justify-between">
+									<div className="flex items-center gap-2">
+										<span className="size-2 rounded-full bg-emerald-500" />
+										<span className="text-xs font-semibold text-foreground">
+											NLLB-200 (
+											{QUANTIZATION_OPTIONS.find((o) => o.id === translationQuantization)?.name ??
+												translationQuantization.toUpperCase()}
+											)
+										</span>
+										<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none">
 											Installed & Ready
 										</span>
-									) : selectedQuantStatus.isDownloading ? (
-										<span className="text-[11px] text-primary font-medium">
-											Downloading ({Math.round(selectedQuantStatus.progress)}
-											%)
-										</span>
+									</div>
+									<span className="font-mono text-[11px] text-muted-foreground">
+										{QUANTIZATION_OPTIONS.find((o) => o.id === translationQuantization)?.size}
+									</span>
+								</div>
+								<p className="text-[11px] text-muted-foreground leading-relaxed">
+									Offline neural translation model • Ready for high-quality multilingual dubbing
+								</p>
+								<div className="flex items-center justify-between pt-1 border-t border-border/40">
+									<Button
+										size="sm"
+										variant="ghost"
+										className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
+										onPress={() => setIsSwitchingTranslationQuant(true)}
+									>
+										Switch / Re-download
+									</Button>
+									<Button
+										size="sm"
+										variant="ghost"
+										className="h-7 text-xs text-destructive hover:bg-destructive/10 px-2 gap-1"
+										onPress={() => handleDeleteTranslationModel(translationQuantization)}
+									>
+										<Trash className="size-3" />
+										Delete Model
+									</Button>
+								</div>
+							</div>
+						) : (
+							<>
+								<div className="flex items-center justify-between">
+									<Label className="text-[12px] font-medium">Model Quantization</Label>
+									{isSwitchingTranslationQuant && selectedQuantStatus.exists ? (
+										<Button
+											size="sm"
+											variant="ghost"
+											className="h-6 text-[11px] text-muted-foreground hover:text-foreground px-1.5"
+											onPress={() => setIsSwitchingTranslationQuant(false)}
+										>
+											Done
+										</Button>
 									) : (
-										<span className="text-[11px] text-amber-500 font-medium">
-											Not downloaded
+										<span className="text-[11px] text-muted-foreground">
+											Select to download
 										</span>
 									)}
 								</div>
 
-								{!selectedQuantStatus.exists &&
-									!selectedQuantStatus.isDownloading && (
-										<Button
-											size="sm"
-											variant="primary"
-											className="h-7 text-xs px-2.5"
-											onPress={() =>
-												handleDownloadModel(translationQuantization)
-											}
-										>
-											Download
-										</Button>
-									)}
-							</div>
+								{/* Quantization options */}
+								<div className="flex flex-col gap-2">
+									{QUANTIZATION_OPTIONS.map((opt) => {
+										const isSelected = translationQuantization === opt.id;
+										const status = modelStatusByQuantization[opt.id];
+										const isInstalled = Boolean(status?.exists);
 
-							{selectedQuantStatus.isDownloading && (
-								<ProgressBar
-									value={selectedQuantStatus.progress}
-									className="w-full h-1.5"
-									aria-label="Model download progress"
-								/>
-							)}
-						</div>
+										return (
+											<button
+												type="button"
+												key={opt.id}
+												onClick={() => updateTranslationQuantization(opt.id)}
+												className={cn(
+													"group relative flex flex-col gap-1.5 p-3 rounded-xl border text-left transition-all",
+													isSelected
+														? "border-primary bg-primary/[0.07] shadow-xs"
+														: "border-border/70 bg-card/40 hover:bg-card/75 hover:border-border",
+												)}
+											>
+												<div className="flex items-center justify-between gap-2 w-full">
+													<div className="flex items-center gap-2 min-w-0 flex-wrap">
+														<div
+															className={cn(
+																"size-4 shrink-0 rounded-full border flex items-center justify-center transition-colors",
+																isSelected
+																	? "border-primary bg-primary"
+																	: "border-muted-foreground/40 group-hover:border-muted-foreground/70",
+															)}
+														>
+															{isSelected && (
+																<span className="size-1.5 rounded-full bg-primary-foreground" />
+															)}
+														</div>
+														<span className="text-xs font-semibold text-foreground tracking-tight">
+															{opt.name}
+														</span>
+														<span className="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] text-muted-foreground leading-none shrink-0">
+															{opt.badge}
+														</span>
+														{isInstalled && (
+															<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none shrink-0 flex items-center gap-1">
+																<span className="size-1 rounded-full bg-emerald-500" />
+																Installed
+															</span>
+														)}
+													</div>
+													<span className="font-mono text-[11px] font-medium text-muted-foreground bg-muted/70 px-1.5 py-0.5 rounded leading-none shrink-0">
+														{opt.size}
+													</span>
+												</div>
+												<p className="pl-6 text-xs text-muted-foreground leading-relaxed">
+													{opt.description}
+												</p>
+											</button>
+										);
+									})}
+								</div>
+
+								{/* Selected Quantization Model Download & Status Card */}
+								<div className="rounded-xl border border-border/80 bg-card p-3 flex flex-col gap-2">
+									<div className="flex items-center justify-between">
+										<div className="flex items-center gap-2">
+											<span className="text-xs font-medium">
+												{translationQuantization.toUpperCase()} Model:
+											</span>
+											{selectedQuantStatus.exists ? (
+												<span className="text-[11px] text-emerald-500 font-medium">
+													Installed & Ready
+												</span>
+											) : selectedQuantStatus.isDownloading ? (
+												<span className="text-[11px] text-primary font-medium">
+													Downloading ({Math.round(selectedQuantStatus.progress)}%)
+												</span>
+											) : (
+												<span className="text-[11px] text-amber-500 font-medium">
+													Not downloaded
+												</span>
+											)}
+										</div>
+
+										{!selectedQuantStatus.exists &&
+											!selectedQuantStatus.isDownloading && (
+												<Button
+													size="sm"
+													variant="primary"
+													className="h-7 text-xs px-2.5"
+													onPress={() =>
+														handleDownloadModel(translationQuantization)
+													}
+												>
+													Download
+												</Button>
+											)}
+									</div>
+
+									{selectedQuantStatus.isDownloading && (
+										<ProgressBar
+											value={selectedQuantStatus.progress}
+											className="w-full h-1.5"
+											aria-label="Model download progress"
+										/>
+									)}
+								</div>
+							</>
+						)}
 					</div>
 				)}
 
@@ -585,20 +646,25 @@ export function DubbingPanel({
 							}
 							className="grid grid-cols-2 gap-2"
 						>
-							<ChoiceItem value="openai">OpenAI / Compatible</ChoiceItem>
+							<ChoiceItem value="openai">OpenAI</ChoiceItem>
 							<ChoiceItem value="deepl">DeepL</ChoiceItem>
 						</ChoiceGroup>
 
 						{apiTranslationProvider === "openai" ? (
 							/* OpenAI & OpenAI-Compatible Custom Endpoint Config */
 							<div className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-card/60 p-3">
-								<div className="flex items-center justify-between">
-									<Label className="text-[12px] font-medium">OpenAI / Custom Endpoint</Label>
-									{(controller.customOpenAiConfig.hasApiKey || savedApiKeys.openai) && (
-										<span className="text-[10px] text-emerald-500 font-medium">
-											Configured
-										</span>
-									)}
+								<div className="flex flex-col gap-0.5">
+									<div className="flex items-center justify-between">
+										<Label className="text-[12px] font-medium">OpenAI API Settings</Label>
+										{(controller.customOpenAiConfig.hasApiKey || savedApiKeys.openai) && (
+											<span className="text-[10px] text-emerald-500 font-medium">
+												Configured
+											</span>
+										)}
+									</div>
+									<p className="text-[11px] text-muted-foreground">
+										Compatible with OpenAI, Groq, Together, Ollama, OpenRouter, etc.
+									</p>
 								</div>
 
 								<div className="flex flex-col gap-1">
@@ -661,7 +727,7 @@ export function DubbingPanel({
 									className="h-7 text-xs self-end mt-1"
 									onPress={controller.handleSaveCustomOpenAiConfig}
 								>
-									Save Endpoint Settings
+									Save API Settings
 								</Button>
 							</div>
 						) : (
@@ -797,199 +863,268 @@ export function DubbingPanel({
 
 				{ttsBackend === "local" && (
 					<div className="flex flex-col gap-3 pt-1">
-						<div className="flex items-center justify-between">
-							<Label className="text-[12px] font-medium">Fish Audio S2-Pro Weights</Label>
-							<span className="text-[11px] text-muted-foreground">Select quantization</span>
-						</div>
-
-						{/* Quantization options */}
-						<div className="flex flex-col gap-2.5">
-							{TTS_QUANTIZATION_OPTIONS.map((opt) => {
-								const isSelected = controller.ttsQuantization === opt.id;
-								const status = controller.ttsModelStatusByQuantization[opt.id];
-								const isInstalled = Boolean(status?.exists);
-
-								return (
-									<button
-										type="button"
-										key={opt.id}
-										onClick={() => controller.updateTtsQuantization(opt.id)}
-										className={cn(
-											"group relative flex flex-col gap-1.5 p-3 rounded-xl border text-left transition-all",
-											isSelected
-												? "border-primary bg-primary/[0.07] shadow-xs"
-												: "border-border/70 bg-card/40 hover:bg-card/75 hover:border-border",
-										)}
-									>
-										{/* Row 1: Radio Ring + Model Name + Badges + Size */}
-										<div className="flex items-center justify-between gap-2 w-full">
-											<div className="flex items-center gap-2 min-w-0 flex-wrap">
-												{/* Radio Ring */}
-												<div
-													className={cn(
-														"size-4 shrink-0 rounded-full border flex items-center justify-center transition-colors",
-														isSelected
-															? "border-primary bg-primary"
-															: "border-muted-foreground/40 group-hover:border-muted-foreground/70",
-													)}
-												>
-													{isSelected && (
-														<span className="size-1.5 rounded-full bg-primary-foreground" />
-													)}
-												</div>
-
-												{/* Model Name */}
-												<span className="text-xs font-semibold text-foreground tracking-tight">
-													{opt.name}
-												</span>
-
-												{/* Badge / Tag */}
-												<span
-													className={cn(
-														"rounded px-1.5 py-0.5 text-[10px] font-medium leading-none shrink-0",
-														opt.id === "q5_k_m"
-															? "bg-primary/15 text-primary font-semibold"
-															: opt.id === "f16"
-																? "bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold"
-																: "bg-foreground/10 text-muted-foreground",
-													)}
-												>
-													{opt.badge}
-												</span>
-
-												{/* Installed Indicator */}
-												{isInstalled && (
-													<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none shrink-0 flex items-center gap-1">
-														<span className="size-1 rounded-full bg-emerald-500" />
-														Installed
-													</span>
-												)}
-											</div>
-
-											{/* Size Tag */}
-											<span className="font-mono text-[11px] font-medium text-muted-foreground bg-muted/70 px-1.5 py-0.5 rounded leading-none shrink-0">
-												{opt.size}
-											</span>
-										</div>
-
-										{/* Row 2: Description + Hardware Guideline */}
-										<div className="pl-6 flex flex-col gap-1">
-											<p className="text-xs text-muted-foreground leading-relaxed">
-												{opt.description}
-											</p>
-											<span className="text-[10px] font-medium text-muted-foreground/80 pt-0.5">
-												⚡ {opt.recommendedRam}
-											</span>
-										</div>
-									</button>
-								);
-							})}
-						</div>
-
-						{/* Download status & action card */}
 						{(() => {
-							const selectedTtsStatus = controller.ttsModelStatusByQuantization[controller.ttsQuantization];
+							const selectedTtsStatus =
+								controller.ttsModelStatusByQuantization[controller.ttsQuantization];
 							const isDownloading = selectedTtsStatus?.isDownloading;
 							const isInstalled = selectedTtsStatus?.exists;
 							const currentOption =
-								TTS_QUANTIZATION_OPTIONS.find((o) => o.id === controller.ttsQuantization) ??
-								TTS_QUANTIZATION_OPTIONS[0];
+								TTS_QUANTIZATION_OPTIONS.find(
+									(o) => o.id === controller.ttsQuantization,
+								) ?? TTS_QUANTIZATION_OPTIONS[0];
 
-							if (isDownloading) {
-								const downloaded = selectedTtsStatus.downloadedBytes ?? 0;
-								const total =
-									selectedTtsStatus.totalBytes && selectedTtsStatus.totalBytes > 0
-										? selectedTtsStatus.totalBytes
-										: currentOption.sizeBytes;
-								const pct = Math.min(100, Math.max(0, Math.round(selectedTtsStatus.progress)));
-
+							if (isInstalled && !isSwitchingTtsQuant) {
 								return (
-									<div className="rounded-xl border border-primary/30 bg-primary/[0.05] p-3.5 flex flex-col gap-2.5">
-										{/* Top row: Title + Percentage + Cancel */}
-										<div className="flex items-center justify-between gap-2">
-											<div className="flex items-center gap-2 min-w-0">
-												<span className="size-2 rounded-full bg-primary animate-pulse shrink-0" />
-												<span className="text-xs font-semibold text-foreground truncate">
-													Downloading {currentOption.name}
+									<div className="rounded-xl border border-border/80 bg-card p-3 flex flex-col gap-2.5">
+										<div className="flex items-center justify-between">
+											<div className="flex items-center gap-2">
+												<span className="size-2 rounded-full bg-emerald-500" />
+												<span className="text-xs font-semibold text-foreground">
+													S2-Pro ({currentOption.name})
 												</span>
-												<span className="font-mono text-xs font-bold text-primary shrink-0">
-													{pct}%
+												<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none">
+													Installed & Ready
 												</span>
 											</div>
+											<span className="font-mono text-[11px] text-muted-foreground">
+												{currentOption.size}
+											</span>
+										</div>
+										<p className="text-[11px] text-muted-foreground leading-relaxed">
+											Zero-shot cloning engine • {currentOption.size} • Ready offline
+										</p>
+										<div className="flex items-center justify-between pt-1 border-t border-border/40">
 											<Button
 												size="sm"
 												variant="ghost"
-												className="h-6 text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/10 px-2 shrink-0"
-												onPress={() => void handleCancelTtsModelDownload()}
+												className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
+												onPress={() => setIsSwitchingTtsQuant(true)}
 											>
-												Cancel
+												Switch Quantization
 											</Button>
-										</div>
-
-										{/* Metrics row */}
-										<div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono">
-											<span>
-												{formatBytes(downloaded)} / {formatBytes(total)}
-											</span>
-											<span>
-												{selectedTtsStatus.speed
-													? `${(selectedTtsStatus.speed / 1_048_576).toFixed(1)} MB/s`
-													: "Connecting..."}
-												{selectedTtsStatus.eta !== undefined && selectedTtsStatus.eta > 0
-													? ` • ETA ${selectedTtsStatus.eta}s`
-													: ""}
-											</span>
-										</div>
-
-										{/* Smooth progress bar */}
-										<div className="h-2 w-full bg-primary/15 rounded-full overflow-hidden">
-											<div
-												className="h-full bg-primary transition-all duration-300 ease-out rounded-full"
-												style={{ width: `${pct}%` }}
-											/>
+											<Button
+												size="sm"
+												variant="ghost"
+												className="h-7 text-xs text-destructive hover:bg-destructive/10 px-2 gap-1"
+												onPress={() =>
+													handleDeleteTtsModel(controller.ttsQuantization)
+												}
+											>
+												<Trash className="size-3" />
+												Delete Model
+											</Button>
 										</div>
 									</div>
 								);
 							}
 
 							return (
-								<div className="rounded-xl border border-border/80 bg-card p-3 flex items-center justify-between gap-3">
-									<div className="flex flex-col gap-0.5 min-w-0">
-										<span className="text-xs font-medium text-foreground truncate">
-											{currentOption.name} Weights
-										</span>
-										{isInstalled ? (
-											<span className="text-[11px] text-emerald-500 font-medium flex items-center gap-1.5">
-												<span className="size-1.5 rounded-full bg-emerald-500" />
-												Ready for Offline Voice Synthesis
-											</span>
+								<>
+									<div className="flex items-center justify-between">
+										<Label className="text-[12px] font-medium">
+											Fish Audio S2-Pro Weights
+										</Label>
+										{isSwitchingTtsQuant && isInstalled ? (
+											<Button
+												size="sm"
+												variant="ghost"
+												className="h-6 text-[11px] text-muted-foreground hover:text-foreground px-1.5"
+												onPress={() => setIsSwitchingTtsQuant(false)}
+											>
+												Done
+											</Button>
 										) : (
-											<span className="text-[11px] text-amber-500 font-medium">
-												Not installed offline ({currentOption.size})
+											<span className="text-[11px] text-muted-foreground">
+												Select quantization
 											</span>
 										)}
 									</div>
 
-									{!isInstalled ? (
-										<Button
-											size="sm"
-											variant="primary"
-											className="h-8 text-xs font-medium px-3 shrink-0"
-											onPress={() => controller.handleDownloadTtsModel(controller.ttsQuantization)}
-										>
-											Download {currentOption.size}
-										</Button>
+									{/* Quantization options */}
+									<div className="flex flex-col gap-2.5">
+										{TTS_QUANTIZATION_OPTIONS.map((opt) => {
+											const isSelected = controller.ttsQuantization === opt.id;
+											const status = controller.ttsModelStatusByQuantization[opt.id];
+											const installed = Boolean(status?.exists);
+
+											return (
+												<button
+													type="button"
+													key={opt.id}
+													onClick={() => controller.updateTtsQuantization(opt.id)}
+													className={cn(
+														"group relative flex flex-col gap-1.5 p-3 rounded-xl border text-left transition-all",
+														isSelected
+															? "border-primary bg-primary/[0.07] shadow-xs"
+															: "border-border/70 bg-card/40 hover:bg-card/75 hover:border-border",
+													)}
+												>
+													{/* Row 1: Radio Ring + Model Name + Badges + Size */}
+													<div className="flex items-center justify-between gap-2 w-full">
+														<div className="flex items-center gap-2 min-w-0 flex-wrap">
+															{/* Radio Ring */}
+															<div
+																className={cn(
+																	"size-4 shrink-0 rounded-full border flex items-center justify-center transition-colors",
+																	isSelected
+																		? "border-primary bg-primary"
+																		: "border-muted-foreground/40 group-hover:border-muted-foreground/70",
+																)}
+															>
+																{isSelected && (
+																	<span className="size-1.5 rounded-full bg-primary-foreground" />
+																)}
+															</div>
+
+															{/* Model Name */}
+															<span className="text-xs font-semibold text-foreground tracking-tight">
+																{opt.name}
+															</span>
+
+															{/* Badge / Tag */}
+															<span
+																className={cn(
+																	"rounded px-1.5 py-0.5 text-[10px] font-medium leading-none shrink-0",
+																	opt.id === "q5_k_m"
+																		? "bg-primary/15 text-primary font-semibold"
+																		: opt.id === "f16"
+																			? "bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold"
+																			: "bg-foreground/10 text-muted-foreground",
+																)}
+															>
+																{opt.badge}
+															</span>
+
+															{/* Installed Indicator */}
+															{installed && (
+																<span className="rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium leading-none shrink-0 flex items-center gap-1">
+																	<span className="size-1 rounded-full bg-emerald-500" />
+																	Installed
+																</span>
+															)}
+														</div>
+
+														{/* Size Tag */}
+														<span className="font-mono text-[11px] font-medium text-muted-foreground bg-muted/70 px-1.5 py-0.5 rounded leading-none shrink-0">
+															{opt.size}
+														</span>
+													</div>
+
+													{/* Row 2: Description + Hardware Guideline */}
+													<div className="pl-6 flex flex-col gap-1">
+														<p className="text-xs text-muted-foreground leading-relaxed">
+															{opt.description}
+														</p>
+														<span className="text-[10px] font-medium text-muted-foreground/80 pt-0.5">
+															⚡ {opt.recommendedRam}
+														</span>
+													</div>
+												</button>
+											);
+										})}
+									</div>
+
+									{/* Download status & action card */}
+									{isDownloading ? (
+										<div className="rounded-xl border border-primary/30 bg-primary/[0.05] p-3.5 flex flex-col gap-2.5">
+											<div className="flex items-center justify-between gap-2">
+												<div className="flex items-center gap-2 min-w-0">
+													<span className="size-2 rounded-full bg-primary animate-pulse shrink-0" />
+													<span className="text-xs font-semibold text-foreground truncate">
+														Downloading {currentOption.name}
+													</span>
+													<span className="font-mono text-xs font-bold text-primary shrink-0">
+														{Math.min(
+															100,
+															Math.max(0, Math.round(selectedTtsStatus.progress)),
+														)}
+														%
+													</span>
+												</div>
+												<Button
+													size="sm"
+													variant="ghost"
+													className="h-6 text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/10 px-2 shrink-0"
+													onPress={() => void handleCancelTtsModelDownload()}
+												>
+													Cancel
+												</Button>
+											</div>
+
+											<div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+												<span>
+													{formatBytes(selectedTtsStatus.downloadedBytes ?? 0)} /{" "}
+													{formatBytes(
+														selectedTtsStatus.totalBytes &&
+															selectedTtsStatus.totalBytes > 0
+															? selectedTtsStatus.totalBytes
+															: currentOption.sizeBytes,
+													)}
+												</span>
+												<span>
+													{selectedTtsStatus.speed
+														? `${(selectedTtsStatus.speed / 1_048_576).toFixed(1)} MB/s`
+														: "Connecting..."}
+													{selectedTtsStatus.eta !== undefined &&
+													selectedTtsStatus.eta > 0
+														? ` • ETA ${selectedTtsStatus.eta}s`
+														: ""}
+												</span>
+											</div>
+
+											<div className="h-2 w-full bg-primary/15 rounded-full overflow-hidden">
+												<div
+													className="h-full bg-primary transition-all duration-300 ease-out rounded-full"
+													style={{
+														width: `${Math.min(100, Math.max(0, Math.round(selectedTtsStatus.progress)))}%`,
+													}}
+												/>
+											</div>
+										</div>
 									) : (
-										<Button
-											size="sm"
-											variant="ghost"
-											className="h-7 text-[11px] text-muted-foreground hover:text-foreground px-2 shrink-0"
-											onPress={() => controller.handleDownloadTtsModel(controller.ttsQuantization)}
-										>
-											Re-download
-										</Button>
+										<div className="rounded-xl border border-border/80 bg-card p-3 flex items-center justify-between gap-3">
+											<div className="flex flex-col gap-0.5 min-w-0">
+												<span className="text-xs font-medium text-foreground truncate">
+													{currentOption.name} Weights
+												</span>
+												{isInstalled ? (
+													<span className="text-[11px] text-emerald-500 font-medium flex items-center gap-1.5">
+														<span className="size-1.5 rounded-full bg-emerald-500" />
+														Ready for Offline Voice Synthesis
+													</span>
+												) : (
+													<span className="text-[11px] text-amber-500 font-medium">
+														Not installed offline ({currentOption.size})
+													</span>
+												)}
+											</div>
+
+											{!isInstalled ? (
+												<Button
+													size="sm"
+													variant="primary"
+													className="h-8 text-xs font-medium px-3 shrink-0"
+													onPress={() =>
+														handleDownloadTtsModel(controller.ttsQuantization)
+													}
+												>
+													Download {currentOption.size}
+												</Button>
+											) : (
+												<Button
+													size="sm"
+													variant="ghost"
+													className="h-7 text-[11px] text-muted-foreground hover:text-foreground px-2 shrink-0"
+													onPress={() =>
+														handleDownloadTtsModel(controller.ttsQuantization)
+													}
+												>
+													Re-download
+												</Button>
+											)}
+										</div>
 									)}
-								</div>
+								</>
 							);
 						})()}
 					</div>
@@ -1006,20 +1141,77 @@ export function DubbingPanel({
 				)}
 
 				{isGenerating && (
-					<div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
-						<div className="flex items-center justify-between text-xs">
-							<span className="font-medium text-primary capitalize">
-								{generationStage === "extracting-ref" &&
-									"Extracting voice sample..."}
-								{generationStage === "translating" &&
-									`Translating transcript into ${selectedLangObj?.name}...`}
-								{generationStage === "synthesizing" &&
-									"Cloning voice with Fish Audio S2-Pro..."}
-								{generationStage === "aligning" &&
-									"Time-aligning dubbed captions..."}
+					<div className="flex flex-col gap-2.5 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+						<div className="flex items-center justify-between">
+							<span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+								Dubbing Pipeline
 							</span>
-							<span className="font-mono text-[11px] text-muted-foreground">
+							<span className="font-mono text-xs font-semibold text-primary">
 								{generationProgress}%
+							</span>
+						</div>
+
+						{/* 4-Stage visual stepper */}
+						<div className="grid grid-cols-4 gap-1.5 text-center text-[10px]">
+							<div
+								className={cn(
+									"py-1 px-1 rounded-md border font-medium transition-colors",
+									generationProgress >= 25
+										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+										: generationStage === "translating" ||
+												generationStage === "extracting-ref"
+											? "border-primary bg-primary/20 text-primary animate-pulse"
+											: "border-border/60 bg-background/50 text-muted-foreground",
+								)}
+							>
+								1. Translate
+							</div>
+							<div
+								className={cn(
+									"py-1 px-1 rounded-md border font-medium transition-colors",
+									generationProgress >= 70
+										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+										: generationStage === "synthesizing"
+											? "border-primary bg-primary/20 text-primary animate-pulse"
+											: "border-border/60 bg-background/50 text-muted-foreground",
+								)}
+							>
+								2. Synthesize
+							</div>
+							<div
+								className={cn(
+									"py-1 px-1 rounded-md border font-medium transition-colors",
+									generationProgress >= 95
+										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+										: generationStage === "aligning"
+											? "border-primary bg-primary/20 text-primary animate-pulse"
+											: "border-border/60 bg-background/50 text-muted-foreground",
+								)}
+							>
+								3. Align
+							</div>
+							<div
+								className={cn(
+									"py-1 px-1 rounded-md border font-medium transition-colors",
+									generationProgress >= 100
+										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+										: generationStage === "finalizing"
+											? "border-primary bg-primary/20 text-primary animate-pulse"
+											: "border-border/60 bg-background/50 text-muted-foreground",
+								)}
+							>
+								4. Finalize
+							</div>
+						</div>
+
+						<div className="flex items-center justify-between text-xs pt-0.5">
+							<span className="font-medium text-foreground">
+								{generationStage === "extracting-ref" &&
+									"Extracting voice reference..."}
+								{generationStage === "translating" && "Translating Captions..."}
+								{generationStage === "synthesizing" && "Synthesizing Voice..."}
+								{generationStage === "aligning" && "Aligning Captions..."}
+								{generationStage === "finalizing" && "Finalizing Track..."}
 							</span>
 						</div>
 						<ProgressBar
