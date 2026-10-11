@@ -29,6 +29,10 @@ vi.mock("../dubbing/fishAudio", () => ({
 	synthesizeAudioWithLocalEngine: vi
 		.fn()
 		.mockResolvedValue({ success: true, dubbedAudioPath: "/out/local.wav", durationMs: 4500 }),
+	synthesizeDubbedSegments: vi
+		.fn()
+		.mockResolvedValue({ success: true, dubbedAudioPath: "/out/master.wav", durationMs: 5000 }),
+	cancelDubbingSynthesis: vi.fn().mockResolvedValue({ success: true, canceled: true }),
 	deleteTtsModel: vi.fn().mockResolvedValue({ success: true, deleted: true }),
 }));
 
@@ -101,6 +105,8 @@ describe("Dubbing IPC Handlers", () => {
 			"dubbing:translate",
 			"dubbing:synthesize-api",
 			"dubbing:synthesize-local",
+			"dubbing:synthesize-segments",
+			"dubbing:cancel-synthesis",
 			"dubbing:align-captions",
 			"dubbing:save-api-key",
 			"dubbing:get-api-keys",
@@ -210,6 +216,36 @@ describe("Dubbing IPC Handlers", () => {
 		})) as Record<string, unknown>;
 		expect(res.success).toBe(true);
 		expect(res.dubbedAudioPath).toBe("/out/api.wav");
+	});
+
+	it("handles segment-anchored audio synthesis", async () => {
+		const handler = handlers.get("dubbing:synthesize-segments")!;
+		const res = (await handler(
+			{
+				sender: {
+					isDestroyed: () => false,
+					send: vi.fn(),
+				},
+			} as unknown as Electron.IpcMainInvokeEvent,
+			{
+				cues: [{ id: "c1", text: "Hola", startMs: 0, endMs: 2000 }],
+				referenceAudioPath: "/out/sample.wav",
+				backend: "cloud",
+				provider: "fish-audio",
+			},
+		)) as Record<string, unknown>;
+		expect(res.success).toBe(true);
+		expect(res.dubbedAudioPath).toBe("/out/master.wav");
+	});
+
+	it("handles synthesis cancellation", async () => {
+		const handler = handlers.get("dubbing:cancel-synthesis")!;
+		const res = (await handler({} as unknown as Electron.IpcMainInvokeEvent)) as Record<
+			string,
+			unknown
+		>;
+		expect(res.success).toBe(true);
+		expect(res.canceled).toBe(true);
 	});
 
 	it("handles caption alignment", async () => {

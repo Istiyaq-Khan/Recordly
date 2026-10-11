@@ -133,11 +133,13 @@ export class OfflineAudioProcessor extends AudioMediaProcessor {
 			companionEntries.push({
 				buffer,
 				gain,
-				startDelaySec: estimateCompanionAudioStartDelaySeconds(
-					refDuration,
-					buffer.duration,
-					sourceAudioFallbackStartDelayMsByPath?.[audioPath],
-				),
+				startDelaySec: isDubbedTrack
+					? 0
+					: estimateCompanionAudioStartDelaySeconds(
+							refDuration,
+							buffer.duration,
+							sourceAudioFallbackStartDelayMsByPath?.[audioPath],
+					  ),
 			});
 		}
 		if (this.cancelled) throw new Error("Export cancelled");

@@ -134,3 +134,39 @@ export interface AlignCaptionsResult {
 	cues?: CaptionCue[];
 	error?: string;
 }
+
+export interface DubbedSegmentCue {
+	id: string;
+	text: string;
+	startMs: number;
+	endMs: number;
+}
+
+export interface SynthesizeDubbedSegmentsOptions {
+	cues: DubbedSegmentCue[];
+	referenceAudioPath: string;
+	referenceTranscript?: string;
+	backend: DubbingTtsBackend;
+	provider?: DubbingCloudProvider;
+	apiKey?: string;
+	quantization?: TtsQuantization;
+	targetLanguage?: string;
+	totalDurationMs?: number;
+}
+
+export interface DubbingSegmentProgressPayload {
+	currentCue: number;
+	totalCues: number;
+	stage: "synthesizing" | "fitting" | "assembling" | "ready";
+	percent: number;
+	detail?: string;
+}
+
+export interface SynthesizeDubbedSegmentsResult {
+	success: boolean;
+	dubbedAudioPath?: string;
+	durationMs?: number;
+	error?: string;
+	canceled?: boolean;
+}
+

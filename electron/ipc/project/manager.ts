@@ -48,6 +48,11 @@ export function getAssetRootPath() {
 export function isPathInsideDirectory(candidatePath: string, directoryPath: string) {
 	const normalizedCandidatePath = normalizePath(candidatePath);
 	const normalizedDirectoryPath = normalizePath(directoryPath);
+	if (process.platform === "win32") {
+		const cLower = normalizedCandidatePath.toLowerCase();
+		const dLower = normalizedDirectoryPath.toLowerCase();
+		return cLower === dLower || cLower.startsWith(`${dLower}${path.sep}`);
+	}
 	return (
 		normalizedCandidatePath === normalizedDirectoryPath ||
 		normalizedCandidatePath.startsWith(`${normalizedDirectoryPath}${path.sep}`)
@@ -75,16 +80,25 @@ export function isAllowedLocalReadPath(candidatePath: string) {
 		// File may not exist yet; keep the lexical path.
 	}
 
+	const isApproved = (checkPath: string) => {
+		if (approvedLocalReadPaths.has(checkPath)) return true;
+		if (process.platform === "win32") {
+			const lower = checkPath.toLowerCase();
+			for (const approved of approvedLocalReadPaths) {
+				if (approved.toLowerCase() === lower) return true;
+			}
+		}
+		return false;
+	};
+
 	// Security: only allow paths under app-managed directories or paths the user
 	// has explicitly opted into (recording session sources, files chosen via
 	// dialog, app-produced exports). The lexical path must satisfy the policy
 	// AND the canonical (real) path must satisfy it too, so a symlink under an
-	// allowed prefix that points outside the allowlist is rejected. Previously
-	// this returned true for any existing file, which made the allowlist a no-op
-	// for read-local-file and the local media URL handler.
+	// allowed prefix that points outside the allowlist is rejected.
 	const lexicalAllowed =
 		allowedPrefixes.some((prefix) => isPathInsideDirectory(normalizedCandidatePath, prefix)) ||
-		approvedLocalReadPaths.has(normalizedCandidatePath);
+		isApproved(normalizedCandidatePath);
 	if (!lexicalAllowed) {
 		return false;
 	}
@@ -95,7 +109,7 @@ export function isAllowedLocalReadPath(candidatePath: string) {
 
 	return (
 		allowedPrefixes.some((prefix) => isPathInsideDirectory(canonicalCandidatePath, prefix)) ||
-		approvedLocalReadPaths.has(canonicalCandidatePath)
+		isApproved(canonicalCandidatePath)
 	);
 }
 
@@ -185,7 +199,12 @@ export async function replaceApprovedSessionLocalReadPaths(
 export async function resolveProjectMediaSources(
 	project: unknown,
 ): Promise<
-	| { success: true; videoPath: string; webcamPath: string | null }
+	| {
+			success: true;
+			videoPath: string;
+			webcamPath: string | null;
+			dubbedAudioPath?: string | null;
+	  }
 	| { success: false; message: string }
 > {
 	if (!project || typeof project !== "object") {
@@ -219,28 +238,43 @@ export async function resolveProjectMediaSources(
 			: null;
 	const normalizedWebcamPath = normalizeVideoSourcePath(rawWebcamPath);
 
-	if (!normalizedWebcamPath) {
-		return {
-			success: true,
-			videoPath: normalizedVideoPath,
-			webcamPath: null,
-		};
+	const rawDubbedAudioPath =
+		typeof (project as { editor?: { dubbingTrack?: { dubbedAudioPath?: unknown } } }).editor
+			?.dubbingTrack?.dubbedAudioPath === "string"
+			? ((project as { editor?: { dubbingTrack?: { dubbedAudioPath?: string } } }).editor
+					?.dubbingTrack?.dubbedAudioPath ?? null)
+			: typeof (project as { dubbingTrack?: { dubbedAudioPath?: unknown } }).dubbingTrack
+						?.dubbedAudioPath === "string"
+				? ((project as { dubbingTrack?: { dubbedAudioPath?: string } }).dubbingTrack
+						?.dubbedAudioPath ?? null)
+				: null;
+	const normalizedDubbedPath = normalizeVideoSourcePath(rawDubbedAudioPath);
+	let resolvedDubbedPath: string | null = null;
+	if (normalizedDubbedPath) {
+		try {
+			await fs.access(normalizedDubbedPath, fsConstants.F_OK);
+			resolvedDubbedPath = normalizedDubbedPath;
+		} catch {
+			resolvedDubbedPath = null;
+		}
 	}
 
-	try {
-		await fs.access(normalizedWebcamPath, fsConstants.F_OK);
-		return {
-			success: true,
-			videoPath: normalizedVideoPath,
-			webcamPath: normalizedWebcamPath,
-		};
-	} catch {
-		return {
-			success: true,
-			videoPath: normalizedVideoPath,
-			webcamPath: null,
-		};
+	let validWebcamPath: string | null = null;
+	if (normalizedWebcamPath) {
+		try {
+			await fs.access(normalizedWebcamPath, fsConstants.F_OK);
+			validWebcamPath = normalizedWebcamPath;
+		} catch {
+			validWebcamPath = null;
+		}
 	}
+
+	return {
+		success: true,
+		videoPath: normalizedVideoPath,
+		webcamPath: validWebcamPath,
+		dubbedAudioPath: resolvedDubbedPath,
+	};
 }
 
 export async function getProjectsDir() {
@@ -502,6 +536,7 @@ export async function readProjectPreview(projectPath: string): Promise<ProjectPr
 	if (!baseUrl) throw new Error("Media server is not ready");
 	await rememberApprovedLocalReadPath(media.videoPath);
 	if (media.webcamPath) await rememberApprovedLocalReadPath(media.webcamPath);
+	if (media.dubbedAudioPath) await rememberApprovedLocalReadPath(media.dubbedAudioPath);
 	return {
 		project: project as ProjectPreviewData["project"],
 		videoUrl: buildMediaUrl(baseUrl, media.videoPath),
@@ -545,6 +580,7 @@ export async function loadProjectFromPath(projectPath: string) {
 	const approvedProjectPaths: Array<string | null | undefined> = [
 		mediaSources.videoPath,
 		mediaSources.webcamPath,
+		mediaSources.dubbedAudioPath,
 	];
 	if (Array.isArray(audioTracks)) {
 		for (const track of audioTracks) {
@@ -559,6 +595,15 @@ export async function loadProjectFromPath(projectPath: string) {
 				approvedProjectPaths.push(region.audioPath);
 			}
 		}
+	}
+	const dubbingTrack = (editorObj?.dubbingTrack ?? projectObj?.dubbingTrack) as
+		| { dubbedAudioPath?: unknown; referenceVoiceSamplePath?: unknown }
+		| undefined;
+	if (typeof dubbingTrack?.dubbedAudioPath === "string") {
+		approvedProjectPaths.push(dubbingTrack.dubbedAudioPath);
+	}
+	if (typeof dubbingTrack?.referenceVoiceSamplePath === "string") {
+		approvedProjectPaths.push(dubbingTrack.referenceVoiceSamplePath);
 	}
 	if (mediaSources.videoPath) {
 		const baseName = mediaSources.videoPath.replace(/\.[^.]+$/u, "");

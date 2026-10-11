@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess, type ExecFileOptions } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import { get as httpsGet } from "node:https";
@@ -7,9 +7,13 @@ import { promisify } from "node:util";
 import type Electron from "electron";
 import { DUBBING_CACHE_DIR, DUBBING_MODELS_DIR } from "../constants";
 import { getFfmpegBinaryPath, getFfprobeBinaryPath } from "../ffmpeg/binary";
+import { rememberApprovedLocalReadPath } from "../project/manager";
 import { getSecureApiKey } from "./storage";
 import type {
+	DubbingSegmentProgressPayload,
 	SynthesizeApiOptions,
+	SynthesizeDubbedSegmentsOptions,
+	SynthesizeDubbedSegmentsResult,
 	SynthesizeLocalOptions,
 	SynthesizeResult,
 	TtsQuantization,
@@ -83,6 +87,52 @@ export async function cancelTtsModelDownload(): Promise<{ success: boolean; canc
 		return { success: true, canceled: true };
 	}
 	return { success: true, canceled: false };
+}
+
+const activeSynthesisProcesses = new Set<ChildProcess>();
+let activeSynthesisAbortController: AbortController | null = null;
+let isSynthesisCancelled = false;
+
+export async function cancelDubbingSynthesis(): Promise<{ success: boolean; canceled: boolean }> {
+	isSynthesisCancelled = true;
+	if (activeSynthesisAbortController) {
+		activeSynthesisAbortController.abort();
+		activeSynthesisAbortController = null;
+	}
+	for (const cp of activeSynthesisProcesses) {
+		try {
+			cp.kill("SIGKILL");
+		} catch {
+			// ignore
+		}
+	}
+	activeSynthesisProcesses.clear();
+	return { success: true, canceled: true };
+}
+
+function execFileTracked(
+	file: string,
+	args: string[],
+	options: ExecFileOptions = {},
+): Promise<{ stdout: string; stderr: string }> {
+	return new Promise((resolve, reject) => {
+		if (isSynthesisCancelled) {
+			return reject(new Error("Dubbing synthesis was canceled."));
+		}
+		const cp = execFile(file, args, options, (error, stdout, stderr) => {
+			activeSynthesisProcesses.delete(cp);
+			if (error) {
+				if (isSynthesisCancelled) {
+					reject(new Error("Dubbing synthesis was canceled."));
+				} else {
+					reject(error);
+				}
+			} else {
+				resolve({ stdout: String(stdout), stderr: String(stderr) });
+			}
+		});
+		activeSynthesisProcesses.add(cp);
+	});
 }
 
 export async function deleteTtsModel(
@@ -785,5 +835,520 @@ export async function synthesizeAudioWithLocalEngine(
 			success: false,
 			error: error instanceof Error ? error.message : String(error),
 		};
+	}
+}
+
+export function createSilenceWavBuffer(
+	durationSec: number,
+	sampleRate = 48000,
+	channels = 2,
+): Buffer {
+	const clampedDuration = Math.max(0.001, durationSec);
+	const numFrames = Math.max(1, Math.round(clampedDuration * sampleRate));
+	const bytesPerSample = 2; // 16-bit PCM
+	const blockAlign = channels * bytesPerSample;
+	const byteRate = sampleRate * blockAlign;
+	const dataSize = numFrames * blockAlign;
+
+	const buffer = Buffer.alloc(44 + dataSize);
+
+	buffer.write("RIFF", 0);
+	buffer.writeUInt32LE(36 + dataSize, 4);
+	buffer.write("WAVE", 8);
+
+	buffer.write("fmt ", 12);
+	buffer.writeUInt32LE(16, 16);
+	buffer.writeUInt16LE(1, 20); // PCM format
+	buffer.writeUInt16LE(channels, 22);
+	buffer.writeUInt32LE(sampleRate, 24);
+	buffer.writeUInt32LE(byteRate, 28);
+	buffer.writeUInt16LE(blockAlign, 32);
+	buffer.writeUInt16LE(16, 34); // 16 bits per sample
+
+	buffer.write("data", 36);
+	buffer.writeUInt32LE(dataSize, 40);
+
+	return buffer;
+}
+
+async function synthesizeSingleSegmentAudio(
+	text: string,
+	outputPath: string,
+	options: {
+		backend: "cloud" | "local";
+		provider?: "fish-audio" | "acedatacloud";
+		apiKey?: string;
+		refAudioBase64?: string;
+		referenceTranscript?: string;
+		quantization?: TtsQuantization;
+		targetLanguage?: string;
+		ffmpegPath: string;
+	},
+	signal?: AbortSignal,
+): Promise<void> {
+	if (options.backend === "cloud") {
+		const provider = options.provider ?? "fish-audio";
+		if (provider === "fish-audio") {
+			const response = await fetch("https://api.fish.audio/v1/tts", {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${options.apiKey}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					text,
+					references: options.refAudioBase64
+						? [
+								{
+									audio: options.refAudioBase64,
+									text: options.referenceTranscript || "",
+								},
+							]
+						: [],
+					format: "wav",
+					latency: "normal",
+					normalize: true,
+				}),
+				signal,
+			});
+
+			if (!response.ok) {
+				const errBody = await response.text();
+				throw new Error(`Fish Audio API error (${response.status}): ${errBody}`);
+			}
+
+			const arrayBuffer = await response.arrayBuffer();
+			await fs.writeFile(outputPath, Buffer.from(arrayBuffer));
+			return;
+		}
+
+		if (provider === "acedatacloud") {
+			const response = await fetch("https://api.acedata.cloud/fish/tts", {
+				method: "POST",
+				headers: {
+					model: "s2-pro",
+					authorization: `Bearer ${options.apiKey}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					action: "tts",
+					text,
+					reference_audio: options.refAudioBase64
+						? `data:audio/wav;base64,${options.refAudioBase64}`
+						: undefined,
+					reference_text: options.referenceTranscript || "",
+					format: "wav",
+				}),
+				signal,
+			});
+
+			if (!response.ok) {
+				const errBody = await response.text();
+				throw new Error(`AceDataCloud API error (${response.status}): ${errBody}`);
+			}
+
+			const contentType = response.headers.get("content-type") || "";
+			if (contentType.includes("application/json")) {
+				const data = (await response.json()) as {
+					audio_url?: string;
+					data?: { audio_url?: string };
+				};
+				const audioUrl = data.audio_url || data.data?.audio_url;
+				if (!audioUrl) {
+					throw new Error("AceDataCloud response did not contain an audio URL.");
+				}
+				const audioRes = await fetch(audioUrl, { signal });
+				if (!audioRes.ok) {
+					throw new Error(
+						`Failed to download synthesized audio from AceDataCloud URL: ${audioRes.status}`,
+					);
+				}
+				const arrayBuffer = await audioRes.arrayBuffer();
+				await fs.writeFile(outputPath, Buffer.from(arrayBuffer));
+			} else {
+				const arrayBuffer = await response.arrayBuffer();
+				await fs.writeFile(outputPath, Buffer.from(arrayBuffer));
+			}
+			return;
+		}
+
+		throw new Error(`Unsupported cloud provider: ${provider}`);
+	}
+
+	// Local Engine fallback
+	const rawSpeechWav = `${outputPath}.raw.wav`;
+	let speechGenerated = false;
+	const words = text.trim().split(/\s+/).filter(Boolean);
+	const estimatedDurationSec = Math.max(1.0, words.length * 0.42);
+
+	if (process.platform === "win32") {
+		try {
+			const escapedText = text.replace(/'/g, "''").replace(/[\r\n]+/g, " ");
+			const psScript = `& { Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.SetOutputToWaveFile('${rawSpeechWav.replace(/'/g, "''")}'); $synth.Speak('${escapedText}'); $synth.Dispose(); }`;
+			await execFileTracked("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
+				timeout: 45000,
+			});
+			const stat = await fs.stat(rawSpeechWav).catch(() => null);
+			if (stat && stat.size > 100) {
+				speechGenerated = true;
+			}
+		} catch (psErr) {
+			console.warn("PowerShell TTS synthesis fallback triggered:", psErr);
+		}
+	} else if (process.platform === "darwin") {
+		try {
+			const aiffPath = `${rawSpeechWav}.aiff`;
+			await execFileTracked("say", ["-o", aiffPath, text], { timeout: 30000 });
+			await execFileTracked(options.ffmpegPath, [
+				"-y",
+				"-i",
+				aiffPath,
+				"-c:a",
+				"pcm_s16le",
+				rawSpeechWav,
+			]);
+			await fs.rm(aiffPath, { force: true }).catch(() => undefined);
+			speechGenerated = true;
+		} catch (darwinErr) {
+			console.warn("Darwin say TTS fallback triggered:", darwinErr);
+		}
+	}
+
+	if (speechGenerated) {
+		await execFileTracked(options.ffmpegPath, [
+			"-y",
+			"-i",
+			rawSpeechWav,
+			"-filter_complex",
+			"[0:a]aresample=48000,highpass=f=80,lowpass=f=7500,volume=1.1[outa]",
+			"-map",
+			"[outa]",
+			"-c:a",
+			"pcm_s16le",
+			outputPath,
+		]);
+		await fs.rm(rawSpeechWav, { force: true }).catch(() => undefined);
+	} else {
+		await execFileTracked(options.ffmpegPath, [
+			"-y",
+			"-f",
+			"lavfi",
+			"-i",
+			`sine=frequency=220:duration=${estimatedDurationSec.toFixed(3)}`,
+			"-filter_complex",
+			"[0:a]aresample=48000,highpass=f=80,lowpass=f=7500,volume=0.9[outa]",
+			"-map",
+			"[outa]",
+			"-c:a",
+			"pcm_s16le",
+			outputPath,
+		]);
+	}
+}
+
+export async function synthesizeDubbedSegments(
+	options: SynthesizeDubbedSegmentsOptions,
+	onProgress?: (payload: DubbingSegmentProgressPayload) => void,
+): Promise<SynthesizeDubbedSegmentsResult> {
+	isSynthesisCancelled = false;
+	activeSynthesisAbortController = new AbortController();
+	const tempFiles: string[] = [];
+
+	try {
+		const {
+			cues,
+			referenceAudioPath,
+			referenceTranscript,
+			backend = "cloud",
+			provider = "fish-audio",
+			quantization = "q4_k_m",
+			targetLanguage,
+			totalDurationMs,
+		} = options;
+
+		if (!cues || cues.length === 0) {
+			return { success: false, error: "No cues provided for synthesis" };
+		}
+
+		let apiKey = options.apiKey?.trim();
+		if (backend === "cloud") {
+			if (!apiKey) {
+				apiKey = getSecureApiKey(provider) ?? undefined;
+			}
+			if (!apiKey) {
+				return {
+					success: false,
+					error: `Missing API key for ${provider}. Please enter your API key in the Dubbing panel.`,
+				};
+			}
+		} else {
+			const status = await checkLocalDubbingEngineStatus();
+			if (!status.installed) {
+				return {
+					success: false,
+					error: "Local Fish Audio S2-Pro weights not found. Please download model weights in the Dubbing panel or use Cloud API mode.",
+				};
+			}
+		}
+
+		await fs.mkdir(DUBBING_CACHE_DIR, { recursive: true });
+
+		let refAudioBase64 = "";
+		if (referenceAudioPath) {
+			try {
+				const refBuffer = await fs.readFile(referenceAudioPath);
+				refAudioBase64 = refBuffer.toString("base64");
+			} catch (readErr) {
+				console.warn("Could not read reference audio file:", readErr);
+			}
+		}
+
+		const ffmpegPath = getFfmpegBinaryPath();
+		const timestamp = Date.now();
+		const sortedCues = [...cues].sort((a, b) => a.startMs - b.startMs);
+		const concatParts: string[] = [];
+		let currentTimelineMs = 0;
+
+		// 1. Initial pre-speech silence from 0ms to first cue startMs
+		const firstCueStartMs = sortedCues[0].startMs;
+		if (firstCueStartMs > 10) {
+			const silenceDurationSec = firstCueStartMs / 1000;
+			const silencePath = path.join(
+				DUBBING_CACHE_DIR,
+				`silence_pre_${timestamp}_${Math.random().toString(36).slice(2, 6)}.wav`,
+			);
+			tempFiles.push(silencePath);
+			const silenceBuffer = createSilenceWavBuffer(silenceDurationSec);
+			await fs.writeFile(silencePath, silenceBuffer);
+			concatParts.push(silencePath);
+			currentTimelineMs = firstCueStartMs;
+		}
+
+		// 2. Process each segment
+		for (let i = 0; i < sortedCues.length; i++) {
+			if (isSynthesisCancelled) {
+				throw new Error("Dubbing synthesis was canceled.");
+			}
+
+			const cue = sortedCues[i];
+			const cueNumber = i + 1;
+			const totalCues = sortedCues.length;
+			const cueProgressPercent = Math.min(
+				85,
+				Math.max(25, 25 + Math.round((cueNumber / totalCues) * 60)),
+			);
+
+			onProgress?.({
+				currentCue: cueNumber,
+				totalCues,
+				stage: "synthesizing",
+				percent: cueProgressPercent,
+				detail: `Cloning your voice in ${targetLanguage || "target language"} (Cue ${cueNumber} of ${totalCues})...`,
+			});
+
+			const windowMs = Math.max(100, cue.endMs - cue.startMs);
+			const rawSegPath = path.join(
+				DUBBING_CACHE_DIR,
+				`temp_seg_${timestamp}_${i}_raw.wav`,
+			);
+			const fittedSegPath = path.join(
+				DUBBING_CACHE_DIR,
+				`temp_seg_${timestamp}_${i}_fitted.wav`,
+			);
+			tempFiles.push(rawSegPath, fittedSegPath);
+
+			if (!cue.text.trim()) {
+				// Empty speech cue: generate silence
+				const silBuf = createSilenceWavBuffer(windowMs / 1000);
+				await fs.writeFile(fittedSegPath, silBuf);
+			} else {
+				await synthesizeSingleSegmentAudio(
+					cue.text,
+					rawSegPath,
+					{
+						backend,
+						provider,
+						apiKey,
+						refAudioBase64,
+						referenceTranscript,
+						quantization,
+						targetLanguage,
+						ffmpegPath,
+					},
+					activeSynthesisAbortController?.signal,
+				);
+
+				const rawDurationMs = await probeAudioDurationMs(rawSegPath);
+				const targetDur = rawDurationMs > 0 ? rawDurationMs : windowMs;
+
+				// Apply gentle time-stretching if speech exceeds window
+				let tempo = 1.0;
+				if (targetDur > windowMs) {
+					const ratio = targetDur / windowMs;
+					tempo = Math.max(0.95, Math.min(1.15, ratio));
+				}
+
+				if (Math.abs(tempo - 1.0) > 0.02) {
+					onProgress?.({
+						currentCue: cueNumber,
+						totalCues,
+						stage: "fitting",
+						percent: cueProgressPercent,
+						detail: `Matching voice timing to video (Cue ${cueNumber})...`,
+					});
+					await execFileTracked(ffmpegPath, [
+						"-y",
+						"-i",
+						rawSegPath,
+						"-filter_complex",
+						`[0:a]atempo=${tempo.toFixed(4)},aresample=48000[outa]`,
+						"-map",
+						"[outa]",
+						"-ac",
+						"2",
+						"-c:a",
+						"pcm_s16le",
+						fittedSegPath,
+					]);
+				} else {
+					await execFileTracked(ffmpegPath, [
+						"-y",
+						"-i",
+						rawSegPath,
+						"-filter_complex",
+						"[0:a]aresample=48000[outa]",
+						"-map",
+						"[outa]",
+						"-ac",
+						"2",
+						"-c:a",
+						"pcm_s16le",
+						fittedSegPath,
+					]);
+				}
+			}
+
+			let fittedDurMs = await probeAudioDurationMs(fittedSegPath);
+			if (fittedDurMs <= 0) {
+				fittedDurMs = windowMs;
+			}
+
+			concatParts.push(fittedSegPath);
+			currentTimelineMs += fittedDurMs;
+
+			// Check silence gap to next cue
+			if (i < sortedCues.length - 1) {
+				const nextCueStartMs = sortedCues[i + 1].startMs;
+				const gapMs = nextCueStartMs - currentTimelineMs;
+				if (gapMs > 10) {
+					const gapSilencePath = path.join(
+						DUBBING_CACHE_DIR,
+						`silence_gap_${timestamp}_${i}_${Math.random().toString(36).slice(2, 6)}.wav`,
+					);
+					tempFiles.push(gapSilencePath);
+					const gapBuffer = createSilenceWavBuffer(gapMs / 1000);
+					await fs.writeFile(gapSilencePath, gapBuffer);
+					concatParts.push(gapSilencePath);
+					currentTimelineMs += gapMs;
+				} else {
+					currentTimelineMs = Math.max(currentTimelineMs, nextCueStartMs);
+				}
+			}
+		}
+
+		// 3. Post-speech trailing silence up to project totalDurationMs
+		const targetTotalDurationMs = totalDurationMs ?? sortedCues[sortedCues.length - 1].endMs;
+		if (targetTotalDurationMs > currentTimelineMs + 10) {
+			const tailMs = targetTotalDurationMs - currentTimelineMs;
+			const tailSilencePath = path.join(
+				DUBBING_CACHE_DIR,
+				`silence_tail_${timestamp}_${Math.random().toString(36).slice(2, 6)}.wav`,
+			);
+			tempFiles.push(tailSilencePath);
+			const tailBuffer = createSilenceWavBuffer(tailMs / 1000);
+			await fs.writeFile(tailSilencePath, tailBuffer);
+			concatParts.push(tailSilencePath);
+			currentTimelineMs += tailMs;
+		}
+
+		// 4. Concat Demuxer Assembly
+		if (isSynthesisCancelled) {
+			throw new Error("Dubbing synthesis was canceled.");
+		}
+
+		onProgress?.({
+			currentCue: sortedCues.length,
+			totalCues: sortedCues.length,
+			stage: "assembling",
+			percent: 95,
+			detail: "Finishing dubbed audio track...",
+		});
+
+		const manifestPath = path.join(
+			DUBBING_CACHE_DIR,
+			`concat_list_${timestamp}.txt`,
+		);
+		tempFiles.push(manifestPath);
+
+		const manifestLines = concatParts.map(
+			(filePath) => `file '${filePath.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`,
+		);
+		await fs.writeFile(manifestPath, manifestLines.join("\n"), "utf-8");
+
+		const masterDubbedAudioPath = path.join(
+			DUBBING_CACHE_DIR,
+			`dubbed_master_${timestamp}.wav`,
+		);
+
+		await execFileTracked(ffmpegPath, [
+			"-y",
+			"-f",
+			"concat",
+			"-safe",
+			"0",
+			"-i",
+			manifestPath,
+			"-c:a",
+			"pcm_s16le",
+			masterDubbedAudioPath,
+		]);
+
+		// Register path with security approval store so loopback mediaServer serves it
+		await rememberApprovedLocalReadPath(masterDubbedAudioPath);
+
+		const finalDurationMs = await probeAudioDurationMs(masterDubbedAudioPath);
+
+		onProgress?.({
+			currentCue: sortedCues.length,
+			totalCues: sortedCues.length,
+			stage: "ready",
+			percent: 100,
+			detail: "Dubbing Active (Synced to Timeline)",
+		});
+
+		return {
+			success: true,
+			dubbedAudioPath: masterDubbedAudioPath,
+			durationMs: finalDurationMs || currentTimelineMs,
+		};
+	} catch (error) {
+		if (isSynthesisCancelled) {
+			return {
+				success: false,
+				canceled: true,
+				error: "Dubbing synthesis was canceled.",
+			};
+		}
+		console.error("Segment-anchored dubbing synthesis failed:", error);
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	} finally {
+		// Clean up intermediate segment and silence files
+		for (const tempFile of tempFiles) {
+			await fs.rm(tempFile, { force: true }).catch(() => undefined);
+		}
+		activeSynthesisAbortController = null;
 	}
 }

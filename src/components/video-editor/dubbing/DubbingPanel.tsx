@@ -103,6 +103,8 @@ export function DubbingPanel({
 		generationProgress,
 		generationError,
 		handleGenerateDubbing,
+		handleCancelDubbing,
+		segmentCueProgress,
 		dubbingTrack,
 		handleToggleActiveTrack,
 		handleSetVolume,
@@ -124,6 +126,29 @@ export function DubbingPanel({
 		generationStage !== "idle" && generationStage !== "ready" && generationStage !== "error";
 
 	const selectedLangObj = SUPPORTED_DUBBING_LANGUAGES.find((l) => l.code === targetLanguage);
+	const targetLangName = selectedLangObj?.name ?? targetLanguage.toUpperCase();
+
+	const generationStageText = (() => {
+		if (generationStage === "extracting-ref") {
+			return "Extracting voice reference...";
+		}
+		if (generationStage === "translating") {
+			return `Translating speech to ${targetLangName}...`;
+		}
+		if (generationStage === "synthesizing") {
+			if (segmentCueProgress && segmentCueProgress.total > 0) {
+				return `Cloning your voice in ${targetLangName} (Cue ${segmentCueProgress.current} of ${segmentCueProgress.total})...`;
+			}
+			return `Cloning your voice in ${targetLangName}...`;
+		}
+		if (generationStage === "aligning") {
+			return "Matching voice timing to video...";
+		}
+		if (generationStage === "finalizing") {
+			return "Finishing dubbed audio track...";
+		}
+		return "Dubbing in progress...";
+	})();
 
 	useEffect(() => {
 		let isMounted = true;
@@ -150,11 +175,18 @@ export function DubbingPanel({
 				<Card className="border border-primary/20 bg-primary/5 p-3.5 rounded-xl flex flex-col gap-3">
 					<div className="flex items-center justify-between">
 						<div className="flex items-center gap-2">
-							<span className="flex size-2 rounded-full bg-emerald-500 animate-pulse" />
+							<span
+								className={cn(
+									"flex size-2 rounded-full",
+									dubbingTrack.isActive
+										? "bg-emerald-500 animate-pulse"
+										: "bg-muted-foreground",
+								)}
+							/>
 							<span className="text-xs font-semibold uppercase tracking-wider text-primary">
 								Dubbed Audio Track
 							</span>
-							<span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold text-primary uppercase">
+							<span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary uppercase border border-primary/20">
 								{dubbingTrack.language ?? dubbingTrack.targetLanguage}
 							</span>
 						</div>
@@ -170,8 +202,8 @@ export function DubbingPanel({
 
 					<p className="text-[11px] text-muted-foreground leading-relaxed">
 						{dubbingTrack.isActive
-							? "Dubbed audio is active on timeline and will replace original speech in export."
-							: "Dubbed audio is muted. Original microphone speech is playing."}
+							? "Dubbed audio is active and synchronized to timeline."
+							: "Original audio active. Dubbed track muted."}
 					</p>
 
 					<div className="pt-1">
@@ -179,22 +211,22 @@ export function DubbingPanel({
 							label="Dubbed Volume"
 							value={Math.round((dubbingTrack.volume ?? 1) * 100)}
 							min={0}
-							max={200}
-							step={5}
+							max={100}
+							step={1}
 							onChange={(val) => handleSetVolume(val / 100)}
 							formatValue={(val) => `${Math.round(val)}%`}
 						/>
 					</div>
 
 					<div className="flex items-center justify-between pt-1 border-t border-border/40">
-						<span className="text-[11px] text-muted-foreground">
-							{(dubbingTrack.syncedCues ?? dubbingTrack.syncedCaptions ?? []).length}{" "}
+						<span className="text-[11px] text-muted-foreground font-medium">
+							{(dubbingTrack.syncedCaptions ?? dubbingTrack.syncedCues ?? []).length}{" "}
 							time-synced cues
 						</span>
 						<Button
 							size="sm"
 							variant="ghost"
-							className="h-7 text-[11px] text-destructive hover:bg-destructive/10"
+							className="h-7 text-[11px] text-destructive hover:bg-destructive/10 px-2 rounded-md transition-colors"
 							onPress={handleRemoveDubbedTrack}
 						>
 							Remove Dubbing
@@ -1140,85 +1172,47 @@ export function DubbingPanel({
 					</div>
 				)}
 
+				{/* Sleek Consumer-Grade Dubbing Progress Card */}
 				{isGenerating && (
-					<div className="flex flex-col gap-2.5 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+					<div className="flex flex-col gap-3 rounded-2xl border border-primary/20 bg-gradient-to-b from-primary/10 to-primary/5 p-4 shadow-sm backdrop-blur-md transition-all animate-in fade-in duration-300">
+						{/* Header: Title + Animated Percentage Badge */}
 						<div className="flex items-center justify-between">
-							<span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-								Dubbing Pipeline
-							</span>
-							<span className="font-mono text-xs font-semibold text-primary">
+							<div className="flex items-center gap-2.5">
+								<span className="relative flex size-2.5">
+									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+									<span className="relative inline-flex size-2.5 rounded-full bg-primary" />
+								</span>
+								<span className="text-xs font-semibold tracking-tight text-foreground">
+									Dubbing in Progress...
+								</span>
+							</div>
+							<span className="font-mono text-xs font-bold text-primary px-2 py-0.5 rounded-full bg-primary/15 border border-primary/20">
 								{generationProgress}%
 							</span>
 						</div>
 
-						{/* 4-Stage visual stepper */}
-						<div className="grid grid-cols-4 gap-1.5 text-center text-[10px]">
+						{/* Smooth Gradient Progress Bar */}
+						<div className="h-2 w-full rounded-full bg-primary/15 overflow-hidden p-0.5">
 							<div
-								className={cn(
-									"py-1 px-1 rounded-md border font-medium transition-colors",
-									generationProgress >= 25
-										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-										: generationStage === "translating" ||
-												generationStage === "extracting-ref"
-											? "border-primary bg-primary/20 text-primary animate-pulse"
-											: "border-border/60 bg-background/50 text-muted-foreground",
-								)}
-							>
-								1. Translate
-							</div>
-							<div
-								className={cn(
-									"py-1 px-1 rounded-md border font-medium transition-colors",
-									generationProgress >= 70
-										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-										: generationStage === "synthesizing"
-											? "border-primary bg-primary/20 text-primary animate-pulse"
-											: "border-border/60 bg-background/50 text-muted-foreground",
-								)}
-							>
-								2. Synthesize
-							</div>
-							<div
-								className={cn(
-									"py-1 px-1 rounded-md border font-medium transition-colors",
-									generationProgress >= 95
-										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-										: generationStage === "aligning"
-											? "border-primary bg-primary/20 text-primary animate-pulse"
-											: "border-border/60 bg-background/50 text-muted-foreground",
-								)}
-							>
-								3. Align
-							</div>
-							<div
-								className={cn(
-									"py-1 px-1 rounded-md border font-medium transition-colors",
-									generationProgress >= 100
-										? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-										: generationStage === "finalizing"
-											? "border-primary bg-primary/20 text-primary animate-pulse"
-											: "border-border/60 bg-background/50 text-muted-foreground",
-								)}
-							>
-								4. Finalize
-							</div>
+								className="h-full rounded-full bg-gradient-to-r from-primary via-indigo-500 to-primary bg-[length:200%_100%] animate-gradient transition-all duration-300 ease-out"
+								style={{ width: `${Math.min(100, Math.max(4, generationProgress))}%` }}
+							/>
 						</div>
 
+						{/* Human-Centered Status Copy & Cancel Action */}
 						<div className="flex items-center justify-between text-xs pt-0.5">
-							<span className="font-medium text-foreground">
-								{generationStage === "extracting-ref" &&
-									"Extracting voice reference..."}
-								{generationStage === "translating" && "Translating Captions..."}
-								{generationStage === "synthesizing" && "Synthesizing Voice..."}
-								{generationStage === "aligning" && "Aligning Captions..."}
-								{generationStage === "finalizing" && "Finalizing Track..."}
+							<span className="text-muted-foreground text-[11px] font-medium truncate max-w-[220px]">
+								{generationStageText}
 							</span>
+							<Button
+								size="sm"
+								variant="ghost"
+								className="h-6 text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/10 px-2 rounded-md transition-colors"
+								onPress={handleCancelDubbing}
+							>
+								Cancel
+							</Button>
 						</div>
-						<ProgressBar
-							value={generationProgress}
-							className="w-full h-1.5"
-							aria-label="Dubbing generation progress"
-						/>
 					</div>
 				)}
 

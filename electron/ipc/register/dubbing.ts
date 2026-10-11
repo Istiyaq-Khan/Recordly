@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 import { alignDubbedCaptions } from "../dubbing/captionAlignment";
 import {
+	cancelDubbingSynthesis,
 	cancelTtsModelDownload,
 	checkLocalDubbingEngineStatus,
 	deleteTtsModel,
@@ -8,6 +9,7 @@ import {
 	getTtsModelStatus,
 	synthesizeAudioWithApi,
 	synthesizeAudioWithLocalEngine,
+	synthesizeDubbedSegments,
 } from "../dubbing/fishAudio";
 import { SUPPORTED_DUBBING_LANGUAGES } from "../dubbing/nllbLanguages";
 import {
@@ -36,6 +38,7 @@ import type {
 	SaveLiveVoiceReferenceOptions,
 	SupportedApiKeyProvider,
 	SynthesizeApiOptions,
+	SynthesizeDubbedSegmentsOptions,
 	SynthesizeLocalOptions,
 	TranscribeAudioSampleOptions,
 	TranslateOptions,
@@ -178,6 +181,25 @@ export function registerDubbingHandlers() {
 
 	ipcMain.handle("dubbing:synthesize-local", async (_, options: SynthesizeLocalOptions) => {
 		return await synthesizeAudioWithLocalEngine(options);
+	});
+
+	ipcMain.handle(
+		"dubbing:synthesize-segments",
+		async (event, options: SynthesizeDubbedSegmentsOptions) => {
+			return await synthesizeDubbedSegments(options, (progress) => {
+				try {
+					if (!event.sender.isDestroyed()) {
+						event.sender.send("dubbing-segment-progress", progress);
+					}
+				} catch {
+					// sender destroyed or closed
+				}
+			});
+		},
+	);
+
+	ipcMain.handle("dubbing:cancel-synthesis", async () => {
+		return await cancelDubbingSynthesis();
 	});
 
 	ipcMain.handle("dubbing:align-captions", async (_, options: AlignCaptionsOptions) => {

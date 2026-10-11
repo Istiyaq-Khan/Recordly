@@ -156,4 +156,66 @@ describe("source preview playback ownership", () => {
 		expect(audio.play).toHaveBeenCalledTimes(plays ? 1 : 0);
 		if (plays) expect(audio.currentTime).toBeCloseTo(time - delay / 1000);
 	});
+
+	it("bypasses companion start delay and plays dubbed track immediately at timeline 0", async () => {
+		const audio = {
+			dataset: {},
+			play: vi.fn(async () => {}),
+			pause: vi.fn(),
+			load: vi.fn(),
+			duration: 8,
+			currentTime: 0,
+			playbackRate: 1,
+			volume: 1,
+			paused: true,
+			addEventListener: vi.fn((event, callback) => {
+				if (event === "canplaythrough") harness.loaded = callback;
+			}),
+			removeEventListener: vi.fn(),
+		};
+		vi.stubGlobal("Audio", function () {
+			return audio;
+		});
+		vi.stubGlobal(
+			"AudioContext",
+			class {
+				state = "running";
+				destination = {};
+				createGain() {
+					return { gain: { value: 1 }, connect: vi.fn() };
+				}
+			},
+		);
+
+		useAudioPreviewSync({
+			audioRegions: [],
+			previewVolume: 1,
+			isPlaying: true,
+			currentTime: 0.5,
+			timelineTime: 0.5,
+			duration: 10,
+			sourcePlaybackRate: 1,
+			previewSourceAudioFallbackPaths: ["/audio.dubbed.wav"],
+			sourceAudioFallbackStartDelayMsByPath: { "/audio.dubbed.wav": 3000 },
+			sourceAudioResourceVersion: 0,
+			isCurrentClipMuted: false,
+			getSourceTrackPreviewGain: () => 1,
+			onSourceFallbackLoadError: vi.fn(),
+			dubbingTrack: {
+				id: "dub-1",
+				targetLanguage: "es",
+				dubbedAudioPath: "/audio.dubbed.wav",
+				isActive: true,
+				volume: 1,
+				syncedCaptions: [],
+			},
+		});
+		for (const effect of harness.effects) effect();
+		await Promise.resolve();
+		harness.effects.at(-1)?.();
+		await Promise.resolve();
+
+		expect(audio.play).toHaveBeenCalledTimes(1);
+		expect(audio.currentTime).toBeCloseTo(0.5);
+	});
 });

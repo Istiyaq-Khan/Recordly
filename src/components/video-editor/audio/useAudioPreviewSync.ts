@@ -420,9 +420,18 @@ export function useAudioPreviewSync({
 				audioDuration,
 				recordedDelayMs,
 			);
+			const isDubbedTrack = Boolean(
+				(dubbingTrack?.isActive &&
+					dubbingTrack.dubbedAudioPath &&
+					sourceAudioPath === dubbingTrack.dubbedAudioPath) ||
+					resolvedSourceTracks.some(
+						(t) => t.kind === "dubbing" && t.sourceRef.path === sourceAudioPath,
+					),
+			);
 			const maxPreviewStartDelaySeconds = isMicCompanionTrack ? 2 : 5;
-			const startDelaySeconds =
-				Number.isFinite(recordedDelayMs) && (recordedDelayMs ?? 0) >= 0
+			const startDelaySeconds = isDubbedTrack
+				? 0
+				: Number.isFinite(recordedDelayMs) && (recordedDelayMs ?? 0) >= 0
 					? Math.max(0, (recordedDelayMs ?? 0) / 1000)
 					: isMicCompanionTrack
 						? 0
@@ -483,6 +492,7 @@ export function useAudioPreviewSync({
 		resolvedSourceTracks,
 		sourceAudioFallbackStartDelayMsByPath,
 		ensureSourceAudioRunning,
+		dubbingTrack,
 	]);
 
 	return { playSourceAudioPreview };

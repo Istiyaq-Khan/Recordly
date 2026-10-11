@@ -905,6 +905,36 @@ interface Window {
 			durationMs?: number;
 			error?: string;
 		}>;
+		synthesizeDubbedSegments: (options: {
+			cues: Array<{ id: string; text: string; startMs: number; endMs: number }>;
+			referenceAudioPath: string;
+			referenceTranscript?: string;
+			backend: "cloud" | "local";
+			provider?: "fish-audio" | "acedatacloud";
+			apiKey?: string;
+			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
+			targetLanguage?: string;
+			totalDurationMs?: number;
+		}) => Promise<{
+			success: boolean;
+			dubbedAudioPath?: string;
+			durationMs?: number;
+			error?: string;
+			canceled?: boolean;
+		}>;
+		cancelDubbingSynthesis: () => Promise<{
+			success: boolean;
+			canceled: boolean;
+		}>;
+		onDubbingSegmentProgress: (
+			callback: (payload: {
+				currentCue: number;
+				totalCues: number;
+				stage: "synthesizing" | "fitting" | "assembling" | "ready";
+				percent: number;
+				detail?: string;
+			}) => void,
+		) => () => void;
 		alignDubbedCaptions: (options: {
 			dubbedAudioPath: string;
 			targetLanguage: string;

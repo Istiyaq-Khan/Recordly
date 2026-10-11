@@ -157,6 +157,10 @@ export function useDubbingController({
 	const [generationStage, setGenerationStage] = useState<DubbingGenerationStage>("idle");
 	const [generationProgress, setGenerationProgress] = useState<number>(0);
 	const [generationError, setGenerationError] = useState<string | null>(null);
+	const [segmentCueProgress, setSegmentCueProgress] = useState<{
+		current: number;
+		total: number;
+	} | null>(null);
 
 	// Sync preferences to disk on change
 	const updateTargetLanguage = useCallback((lang: string) => {
@@ -704,6 +708,46 @@ export function useDubbingController({
 		};
 	}, []);
 
+	// Listen to segment synthesis progress
+	useEffect(() => {
+		if (!window.electronAPI?.onDubbingSegmentProgress) return;
+		const unsubscribe = window.electronAPI.onDubbingSegmentProgress((payload) => {
+			setGenerationProgress(payload.percent);
+			if (payload.stage === "synthesizing") {
+				setGenerationStage("synthesizing");
+				setSegmentCueProgress({
+					current: payload.currentCue,
+					total: payload.totalCues,
+				});
+			} else if (payload.stage === "fitting") {
+				setGenerationStage("aligning");
+			} else if (payload.stage === "assembling") {
+				setGenerationStage("finalizing");
+			} else if (payload.stage === "ready") {
+				setGenerationStage("ready");
+				setSegmentCueProgress(null);
+			}
+		});
+
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Cancel Dubbing Pipeline Execution
+	const handleCancelDubbing = useCallback(async () => {
+		try {
+			await window.electronAPI?.cancelDubbingSynthesis?.();
+		} catch (err) {
+			console.warn("Failed to cancel dubbing synthesis:", err);
+		}
+		setGenerationStage("idle");
+		setGenerationProgress(0);
+		setGenerationError(null);
+		setSegmentCueProgress(null);
+		toast.info("Dubbing generation canceled");
+	}, []);
+
 	// Main Dubbing Pipeline Execution
 	const handleGenerateDubbing = useCallback(async () => {
 		if (!videoPath) {
@@ -774,107 +818,68 @@ export function useDubbingController({
 			}
 
 			const translatedCues = translateRes.translatedCues;
-			const fullTranslatedText = translatedCues.map((c) => c.text).join(" ");
 			setGenerationProgress(25);
 
-			// Stage 2: Synthesizing Voice... (25% – 70%)
+			// Stage 2: Segment-Anchored Audio Synthesis (25% – 95%)
 			setGenerationStage("synthesizing");
-			setGenerationProgress(35);
+			setGenerationProgress(28);
 
-			let synthAudioPath: string | undefined;
-			let synthDurationSec: number | undefined;
-
-			const cueStartMs = cues[0]?.startMs ?? 0;
 			const totalDurationMs =
 				duration && duration > 0
 					? Math.round(duration * 1000)
 					: cues[cues.length - 1]?.endMs ?? 0;
 
-			if (ttsBackend === "cloud") {
-				const synthRes = await window.electronAPI.synthesizeDubbedAudioApi({
-					text: fullTranslatedText,
-					referenceAudioPath: currentRefPath,
-					referenceTranscript: currentRefTranscript,
-					provider: cloudProvider,
-					targetLanguage,
-					cueStartMs,
-					totalDurationMs,
-				});
+			const segmentCues = translatedCues.map((tc, idx) => ({
+				id: tc.id || cues[idx]?.id || `cue-${idx}`,
+				text: tc.text,
+				startMs: cues[idx]?.startMs ?? idx * 2000,
+				endMs: cues[idx]?.endMs ?? (idx + 1) * 2000,
+			}));
 
-				if (!synthRes.success || !synthRes.dubbedAudioPath) {
-					throw new Error(synthRes.error ?? "Cloud voice synthesis failed");
-				}
-				synthAudioPath = synthRes.dubbedAudioPath;
-				synthDurationSec = synthRes.durationMs ? synthRes.durationMs / 1000 : undefined;
-			} else {
-				const synthRes = await window.electronAPI.synthesizeDubbedAudioLocal({
-					text: fullTranslatedText,
-					referenceAudioPath: currentRefPath,
-					referenceTranscript: currentRefTranscript,
-					targetLanguage,
-					quantization: ttsQuantization,
-					cueStartMs,
-					totalDurationMs,
-				});
+			const synthRes = await window.electronAPI.synthesizeDubbedSegments({
+				cues: segmentCues,
+				referenceAudioPath: currentRefPath,
+				referenceTranscript: currentRefTranscript,
+				backend: ttsBackend,
+				provider: cloudProvider,
+				quantization: ttsQuantization,
+				targetLanguage,
+				totalDurationMs,
+			});
 
-				if (!synthRes.success || !synthRes.dubbedAudioPath) {
-					throw new Error(synthRes.error ?? "Local voice synthesis failed");
+			if (!synthRes.success || !synthRes.dubbedAudioPath) {
+				if (synthRes.canceled) {
+					return;
 				}
-				synthAudioPath = synthRes.dubbedAudioPath;
-				synthDurationSec = synthRes.durationMs ? synthRes.durationMs / 1000 : undefined;
+				throw new Error(synthRes.error ?? "Segment audio synthesis failed");
 			}
-			setGenerationProgress(70);
 
-			// Stage 3: Aligning Captions... (70% – 95%)
+			const synthAudioPath = synthRes.dubbedAudioPath;
+			const synthDurationSec = synthRes.durationMs
+				? synthRes.durationMs / 1000
+				: duration;
+
+			// Stage 3: Direct Caption Synchronization (1:1 with Original Cue Timing)
 			setGenerationStage("aligning");
-			setGenerationProgress(75);
-
-			let alignedCues: DubbingSyncedCaptionCue[] = [];
-			if (synthAudioPath) {
-				try {
-					const alignRes = await window.electronAPI.alignDubbedCaptions({
-						dubbedAudioPath: synthAudioPath,
-						targetLanguage,
-						whisperExecutablePath: whisperExecutablePath ?? undefined,
-						whisperModelPath: whisperModelPath ?? undefined,
-					});
-
-					if (alignRes.success && alignRes.cues) {
-						alignedCues = alignRes.cues.map((c) => ({
-							id: c.id,
-							start: c.startMs / 1000,
-							end: c.endMs / 1000,
-							startMs: c.startMs,
-							endMs: c.endMs,
-							text: c.text,
-						}));
-					}
-				} catch (alignErr) {
-					console.warn("[useDubbingController] Auto-alignment warning:", alignErr);
-				}
-			}
-
-			// If alignment had no cues, fallback to scaled timing from original cues
-			if (alignedCues.length === 0 && synthDurationSec) {
-				const originalDurationMs = cues[cues.length - 1]?.endMs ?? 1000;
-				const scaleRatio = (synthDurationSec * 1000) / originalDurationMs;
-				alignedCues = translatedCues.map((tc, idx) => {
-					const orig = cues[idx];
-					const sMs = orig ? Math.round(orig.startMs * scaleRatio) : idx * 2000;
-					const eMs = orig ? Math.round(orig.endMs * scaleRatio) : (idx + 1) * 2000;
-					return {
-						id: `dubcue-${idx}`,
-						start: sMs / 1000,
-						end: eMs / 1000,
-						startMs: sMs,
-						endMs: eMs,
-						text: tc.text,
-					};
-				});
-			}
 			setGenerationProgress(95);
 
-			// Stage 4: Finalizing Track... (95% – 100%)
+			const dubbedCaptions: CaptionCue[] = translatedCues.map((tc, idx) => ({
+				id: tc.id ?? `dubcue-${idx}`,
+				startMs: cues[idx]?.startMs ?? idx * 2000,
+				endMs: cues[idx]?.endMs ?? (idx + 1) * 2000,
+				text: tc.text,
+			}));
+
+			const alignedCues: DubbingSyncedCaptionCue[] = dubbedCaptions.map((c) => ({
+				id: c.id,
+				start: c.startMs / 1000,
+				end: c.endMs / 1000,
+				startMs: c.startMs,
+				endMs: c.endMs,
+				text: c.text,
+			}));
+
+			// Stage 4: Finalizing Track... (98% – 100%)
 			setGenerationStage("finalizing");
 			setGenerationProgress(98);
 
@@ -883,8 +888,8 @@ export function useDubbingController({
 				id: `dubbing-${Date.now()}`,
 				targetLanguage,
 				language: targetLanguage,
-				dubbedAudioPath: synthAudioPath ?? "",
-				audioPath: synthAudioPath ?? "",
+				dubbedAudioPath: synthAudioPath,
+				audioPath: synthAudioPath,
 				referenceVoiceSamplePath: currentRefPath,
 				referenceTranscript: currentRefTranscript,
 				volume: dubbingTrack?.volume ?? 1,
@@ -899,22 +904,18 @@ export function useDubbingController({
 
 			// Automatically swap timeline subtitles to translated target language
 			if (setAutoCaptions) {
-				const captionCues: CaptionCue[] = alignedCues.map((c, idx) => ({
-					id: c.id ?? `dubcue-${idx}`,
-					startMs: c.startMs ?? Math.round(c.start * 1000),
-					endMs: c.endMs ?? Math.round(c.end * 1000),
-					text: c.text,
-				}));
-				setAutoCaptions(captionCues);
+				setAutoCaptions(dubbedCaptions);
 			}
 
 			setGenerationStage("ready");
 			setGenerationProgress(100);
+			setSegmentCueProgress(null);
 			toast.success("AI Dubbing generated and synced to timeline!");
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : "Dubbing generation failed";
 			setGenerationStage("error");
 			setGenerationError(msg);
+			setSegmentCueProgress(null);
 			toast.error(msg);
 		}
 	}, [
@@ -1052,7 +1053,9 @@ export function useDubbingController({
 		generationStage,
 		generationProgress,
 		generationError,
+		segmentCueProgress,
 		handleGenerateDubbing,
+		handleCancelDubbing,
 
 		// Playback & Track Controls
 		dubbingTrack,

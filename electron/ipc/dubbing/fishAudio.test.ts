@@ -16,8 +16,10 @@ vi.mock("./storage", () => ({
 }));
 
 import {
+	cancelDubbingSynthesis,
 	cancelTtsModelDownload,
 	checkLocalDubbingEngineStatus,
+	createSilenceWavBuffer,
 	deleteTtsModel,
 	FISH_TTS_MODEL_CONFIGS,
 	FISH_TTS_TOKENIZER_CONFIG,
@@ -25,6 +27,7 @@ import {
 	getTtsModelStatus,
 	synthesizeAudioWithApi,
 	synthesizeAudioWithLocalEngine,
+	synthesizeDubbedSegments,
 } from "./fishAudio";
 import { getSecureApiKey } from "./storage";
 
@@ -136,5 +139,48 @@ describe("Fish Audio S2-Pro Engine", () => {
 				}),
 			}),
 		);
+	});
+
+	it("generates sample-accurate silence WAV buffer with valid RIFF header", () => {
+		const buf = createSilenceWavBuffer(0.5, 48000, 2);
+		expect(buf.length).toBeGreaterThan(44);
+		expect(buf.toString("utf8", 0, 4)).toBe("RIFF");
+		expect(buf.toString("utf8", 8, 12)).toBe("WAVE");
+		expect(buf.toString("utf8", 12, 16)).toBe("fmt ");
+		expect(buf.toString("utf8", 36, 40)).toBe("data");
+
+		// 0.5s * 48000 frames * 4 bytes/frame = 96000 data bytes
+		const dataSize = buf.readUInt32LE(40);
+		expect(dataSize).toBe(96000);
+		expect(buf.length).toBe(44 + 96000);
+	});
+
+	it("returns error if synthesizeDubbedSegments is called with empty cues", async () => {
+		const result = await synthesizeDubbedSegments({
+			cues: [],
+			referenceAudioPath: "/fake/ref.wav",
+			backend: "cloud",
+		});
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("No cues provided");
+	});
+
+	it("returns error if synthesizeDubbedSegments is missing cloud API key", async () => {
+		vi.mocked(getSecureApiKey).mockReturnValue(null);
+
+		const result = await synthesizeDubbedSegments({
+			cues: [{ id: "cue-1", text: "Hello", startMs: 0, endMs: 2000 }],
+			referenceAudioPath: "/fake/ref.wav",
+			backend: "cloud",
+			provider: "fish-audio",
+		});
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Missing API key for fish-audio");
+	});
+
+	it("handles cancelDubbingSynthesis cleanly", async () => {
+		const cancelRes = await cancelDubbingSynthesis();
+		expect(cancelRes.success).toBe(true);
+		expect(cancelRes.canceled).toBe(true);
 	});
 });

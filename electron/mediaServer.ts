@@ -59,7 +59,18 @@ async function resolveRealPath(filePath: string): Promise<string | null> {
 }
 
 export function isAllowedMediaPath(realPath: string): boolean {
-	return approvedLocalReadPaths.has(realPath);
+	if (approvedLocalReadPaths.has(realPath)) {
+		return true;
+	}
+	if (process.platform === "win32") {
+		const lower = realPath.toLowerCase();
+		for (const approved of approvedLocalReadPaths) {
+			if (approved.toLowerCase() === lower) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 async function handleMediaRequest(
