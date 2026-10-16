@@ -922,6 +922,8 @@ interface Window {
 			durationMs?: number;
 			error?: string;
 			canceled?: boolean;
+			skippedCueCount?: number;
+			totalCues?: number;
 		}>;
 		cancelDubbingSynthesis: () => Promise<{
 			success: boolean;

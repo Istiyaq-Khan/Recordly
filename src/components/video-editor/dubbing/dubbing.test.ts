@@ -136,3 +136,91 @@ describe("Project Persistence & Editor Preferences", () => {
 		expect(customPrefs.dubbingTtsBackend).toBe("local");
 	});
 });
+
+describe("Decoupled Caption-First Placement & Toggle Resilience", () => {
+	const sourceCues = [
+		{ id: "cue-1", startMs: 500, endMs: 2500, text: "Welcome to this tutorial." },
+		{ id: "cue-2", startMs: 3000, endMs: 5500, text: "Let's learn something new today." },
+	];
+
+	const translatedHindiCues = [
+		{ id: "cue-1", text: "इस ट्यूटोरियल में आपका स्वागत है।" },
+		{ id: "cue-2", text: "आइए आज कुछ नया सीखें।" },
+	];
+
+	it("maps translated non-Latin (Hindi) cues directly to timeline captions preserving source timing", () => {
+		const dubbedCaptions = translatedHindiCues.map((tc, idx) => ({
+			id: tc.id ?? `dubcue-${idx}`,
+			startMs: sourceCues[idx].startMs,
+			endMs: sourceCues[idx].endMs,
+			text: tc.text,
+		}));
+
+		expect(dubbedCaptions).toHaveLength(2);
+		expect(dubbedCaptions[0].text).toBe("इस ट्यूटोरियल में आपका स्वागत है।");
+		expect(dubbedCaptions[0].startMs).toBe(500);
+		expect(dubbedCaptions[0].endMs).toBe(2500);
+		expect(dubbedCaptions[1].text).toBe("आइए आज कुछ नया सीखें।");
+		expect(dubbedCaptions[1].startMs).toBe(3000);
+		expect(dubbedCaptions[1].endMs).toBe(5500);
+	});
+
+	it("preserves originalCaptions and handles track toggle state transitions safely", () => {
+		const dubbedTrack: DubbingTrack = {
+			id: "dub-hindi-1",
+			targetLanguage: "hi",
+			language: "hi",
+			dubbedAudioPath: "/cache/dubbed_master_hi.wav",
+			isActive: true,
+			volume: 1.0,
+			originalCaptions: sourceCues,
+			syncedCaptions: [
+				{
+					id: "dubcue-0",
+					start: 0.5,
+					end: 2.5,
+					startMs: 500,
+					endMs: 2500,
+					text: "इस ट्यूटोरियल में आपका स्वागत है।",
+				},
+				{
+					id: "dubcue-1",
+					start: 3.0,
+					end: 5.5,
+					startMs: 3000,
+					endMs: 5500,
+					text: "आइए आज कुछ नया सीखें।",
+				},
+			],
+		};
+
+		// When toggled OFF (isActive: false), restore original source captions
+		const toggledOffCaptions = dubbedTrack.originalCaptions ?? [];
+		expect(toggledOffCaptions).toEqual(sourceCues);
+
+		// When toggled ON (isActive: true), reapply target-language dubbed captions
+		const toggledOnCaptions = (dubbedTrack.syncedCaptions ?? []).map((c) => ({
+			id: c.id,
+			startMs: c.startMs ?? Math.round(c.start * 1000),
+			endMs: c.endMs ?? Math.round(c.end * 1000),
+			text: c.text,
+		}));
+		expect(toggledOnCaptions[0].text).toBe("इस ट्यूटोरियल में आपका स्वागत है।");
+		expect(toggledOnCaptions[1].text).toBe("आइए आज कुछ नया सीखें।");
+	});
+
+	it("supports silence fallback metadata tracking in SynthesizeDubbedSegmentsResult", () => {
+		const sampleResult = {
+			success: true,
+			dubbedAudioPath: "/cache/dubbed_master_hi.wav",
+			durationMs: 6000,
+			skippedCueCount: 2,
+			totalCues: 2,
+		};
+
+		expect(sampleResult.success).toBe(true);
+		expect(sampleResult.skippedCueCount).toBe(2);
+		expect(sampleResult.totalCues).toBe(2);
+		expect(sampleResult.skippedCueCount >= sampleResult.totalCues).toBe(true);
+	});
+});

@@ -170,5 +170,7 @@ export interface SynthesizeDubbedSegmentsResult {
 	durationMs?: number;
 	error?: string;
 	canceled?: boolean;
+	skippedCueCount?: number;
+	totalCues?: number;
 }
 

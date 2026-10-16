@@ -11,7 +11,7 @@ import type {
 	DubbingTranslationEngine,
 	DubbingTtsBackend,
 } from "../types";
-import type { TtsQuantization } from "./constants";
+import { SUPPORTED_DUBBING_LANGUAGES, type TtsQuantization } from "./constants";
 
 interface UseDubbingControllerParams {
 	videoPath: string | null;
@@ -835,6 +835,54 @@ export function useDubbingController({
 			const translatedCues = translateRes.translatedCues;
 			setGenerationProgress(25);
 
+			// DECOUPLED CAPTION-FIRST PLACEMENT:
+			// Immediately map translated cues to timeline captions so target-language
+			// subtitles appear immediately, independent of audio synthesis.
+			const originalSourceCues =
+				dubbingTrack?.originalCaptions && dubbingTrack.originalCaptions.length > 0
+					? dubbingTrack.originalCaptions
+					: [...cues];
+
+			const dubbedCaptions: CaptionCue[] = translatedCues.map((tc, idx) => ({
+				id: tc.id ?? `dubcue-${idx}`,
+				startMs: cues[idx]?.startMs ?? idx * 2000,
+				endMs: cues[idx]?.endMs ?? (idx + 1) * 2000,
+				text: tc.text,
+			}));
+
+			if (setAutoCaptions) {
+				setAutoCaptions(dubbedCaptions);
+			}
+
+			const initialAlignedCues: DubbingSyncedCaptionCue[] = dubbedCaptions.map((c) => ({
+				id: c.id,
+				start: c.startMs / 1000,
+				end: c.endMs / 1000,
+				startMs: c.startMs,
+				endMs: c.endMs,
+				text: c.text,
+			}));
+
+			// Immediately back up original captions and initial synced captions in dubbingTrack state
+			setDubbingTrack((prev) => ({
+				id: prev?.id ?? `dubbing-${Date.now()}`,
+				targetLanguage,
+				language: targetLanguage,
+				dubbedAudioPath: prev?.dubbedAudioPath ?? "",
+				audioPath: prev?.audioPath ?? "",
+				referenceVoiceSamplePath: currentRefPath,
+				referenceTranscript: currentRefTranscript,
+				volume: prev?.volume ?? 1,
+				isActive: true,
+				durationSec: prev?.durationSec ?? 0,
+				syncedCaptions: initialAlignedCues,
+				syncedCues: initialAlignedCues,
+				originalCaptions:
+					prev?.originalCaptions && prev.originalCaptions.length > 0
+						? prev.originalCaptions
+						: originalSourceCues,
+			}));
+
 			// Stage 2: Segment-Anchored Audio Synthesis (25% – 95%)
 			setGenerationStage("synthesizing");
 			setGenerationProgress(28);
@@ -878,13 +926,6 @@ export function useDubbingController({
 			setGenerationStage("aligning");
 			setGenerationProgress(95);
 
-			const dubbedCaptions: CaptionCue[] = translatedCues.map((tc, idx) => ({
-				id: tc.id ?? `dubcue-${idx}`,
-				startMs: cues[idx]?.startMs ?? idx * 2000,
-				endMs: cues[idx]?.endMs ?? (idx + 1) * 2000,
-				text: tc.text,
-			}));
-
 			const alignedCues: DubbingSyncedCaptionCue[] = dubbedCaptions.map((c) => ({
 				id: c.id,
 				start: c.startMs / 1000,
@@ -900,7 +941,7 @@ export function useDubbingController({
 
 			// Build and set DubbingTrack on timeline with original captions preserved
 			const newDubbingTrack: DubbingTrack = {
-				id: `dubbing-${Date.now()}`,
+				id: dubbingTrack?.id ?? `dubbing-${Date.now()}`,
 				targetLanguage,
 				language: targetLanguage,
 				dubbedAudioPath: synthAudioPath,
@@ -912,20 +953,32 @@ export function useDubbingController({
 				durationSec: synthDurationSec,
 				syncedCaptions: alignedCues,
 				syncedCues: alignedCues,
-				originalCaptions: cues,
+				originalCaptions:
+					dubbingTrack?.originalCaptions && dubbingTrack.originalCaptions.length > 0
+						? dubbingTrack.originalCaptions
+						: originalSourceCues,
 			};
 
 			setDubbingTrack(newDubbingTrack);
 
-			// Automatically swap timeline subtitles to translated target language
-			if (setAutoCaptions) {
-				setAutoCaptions(dubbedCaptions);
-			}
-
 			setGenerationStage("ready");
 			setGenerationProgress(100);
 			setSegmentCueProgress(null);
-			toast.success("AI Dubbing generated and synced to timeline!");
+
+			const selectedLangObj = SUPPORTED_DUBBING_LANGUAGES.find((l) => l.code === targetLanguage);
+			const langDisplayName = selectedLangObj?.name ?? targetLanguage.toUpperCase();
+
+			if (synthRes.skippedCueCount && synthRes.skippedCueCount >= segmentCues.length) {
+				toast.warning(
+					`Captions placed successfully. Local voice synthesis skipped for ${langDisplayName} (switch to Cloud API for multilingual voice cloning).`,
+				);
+			} else if (synthRes.skippedCueCount && synthRes.skippedCueCount > 0) {
+				toast.info(
+					`AI Dubbing generated with ${synthRes.skippedCueCount} silence fallback segment(s).`,
+				);
+			} else {
+				toast.success("AI Dubbing generated and synced to timeline!");
+			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : "Dubbing generation failed";
 			setGenerationStage("error");

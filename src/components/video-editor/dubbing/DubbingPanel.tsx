@@ -897,6 +897,23 @@ export function DubbingPanel({
 
 				{ttsBackend === "local" && (
 					<div className="flex flex-col gap-3 pt-1">
+						{!targetLanguage.toLowerCase().startsWith("en") && (
+							<div className="rounded-xl border border-amber-500/30 bg-amber-500/[0.08] p-3 text-xs text-amber-700 dark:text-amber-300 flex flex-col gap-1 leading-relaxed">
+								<div className="flex items-center gap-1.5 font-semibold text-[11px] uppercase tracking-wider text-amber-800 dark:text-amber-200">
+									<span>Language Compatibility Note</span>
+								</div>
+								<p className="text-[11px] leading-relaxed">
+									Note: Local platform voice engines typically support English only. For high-fidelity multilingual voice cloning in {targetLangName}, Spanish, Japanese, etc., use{" "}
+									<button
+										type="button"
+										onClick={() => updateTtsBackend("cloud")}
+										className="font-semibold underline hover:text-amber-900 dark:hover:text-amber-100 transition-colors inline cursor-pointer"
+									>
+										Cloud API (Fish Audio)
+									</button>.
+								</p>
+							</div>
+						)}
 						{(() => {
 							const selectedTtsStatus =
 								controller.ttsModelStatusByQuantization[controller.ttsQuantization];

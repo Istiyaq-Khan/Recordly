@@ -153,6 +153,11 @@ describe("Fish Audio S2-Pro Engine", () => {
 		const dataSize = buf.readUInt32LE(40);
 		expect(dataSize).toBe(96000);
 		expect(buf.length).toBe(44 + 96000);
+
+		// Zero 220Hz sine tone verification: PCM samples must all be 0 (pure silence)
+		for (let i = 44; i < Math.min(1000, buf.length); i++) {
+			expect(buf[i]).toBe(0);
+		}
 	});
 
 	it("returns error if synthesizeDubbedSegments is called with empty cues", async () => {

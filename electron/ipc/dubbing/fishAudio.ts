@@ -756,9 +756,17 @@ export async function synthesizeAudioWithLocalEngine(
 
 		// 1. Attempt platform speech synthesis
 		if (process.platform === "win32") {
+			const tempTextFile = path.join(
+				DUBBING_CACHE_DIR,
+				`temp_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.txt`,
+			);
 			try {
-				const escapedText = text.replace(/'/g, "''").replace(/[\r\n]+/g, " ");
-				const psScript = `& { Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.SetOutputToWaveFile('${rawSpeechWav.replace(/'/g, "''")}'); $synth.Speak('${escapedText}'); $synth.Dispose(); }`;
+				await fs.writeFile(tempTextFile, text, "utf8");
+				const safeTextFilePath = tempTextFile.replace(/'/g, "''");
+				const safeRawWavPath = rawSpeechWav.replace(/'/g, "''");
+				const targetLangCode = (options.targetLanguage || "").toLowerCase().split(/[-_]/)[0];
+
+				const psScript = `& { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; if ('${targetLangCode}') { foreach ($v in $synth.GetInstalledVoices()) { if ($v.VoiceInfo.Culture.TwoLetterISOLanguageName -eq '${targetLangCode}' -or $v.VoiceInfo.Culture.Name -like '${targetLangCode}*') { $synth.SelectVoice($v.VoiceInfo.Name); break; } } } $synth.SetOutputToWaveFile('${safeRawWavPath}'); $spokenText = [System.IO.File]::ReadAllText('${safeTextFilePath}', [System.Text.Encoding]::UTF8); if (![string]::IsNullOrWhiteSpace($spokenText)) { $synth.Speak($spokenText); } $synth.Dispose(); }`;
 				await execFileAsync("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
 					timeout: 45000,
 				});
@@ -768,6 +776,8 @@ export async function synthesizeAudioWithLocalEngine(
 				}
 			} catch (psErr) {
 				console.warn("PowerShell TTS synthesis fallback triggered:", psErr);
+			} finally {
+				await fs.rm(tempTextFile, { force: true }).catch(() => undefined);
 			}
 		} else if (process.platform === "darwin") {
 			try {
@@ -970,9 +980,17 @@ async function synthesizeSingleSegmentAudio(
 	let speechGenerated = false;
 
 	if (process.platform === "win32") {
+		const tempTextFile = path.join(
+			DUBBING_CACHE_DIR,
+			`temp_cue_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.txt`,
+		);
 		try {
-			const escapedText = text.replace(/'/g, "''").replace(/[\r\n]+/g, " ");
-			const psScript = `& { Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.SetOutputToWaveFile('${rawSpeechWav.replace(/'/g, "''")}'); $synth.Speak('${escapedText}'); $synth.Dispose(); }`;
+			await fs.writeFile(tempTextFile, text, "utf8");
+			const safeTextFilePath = tempTextFile.replace(/'/g, "''");
+			const safeRawWavPath = rawSpeechWav.replace(/'/g, "''");
+			const targetLangCode = (options.targetLanguage || "").toLowerCase().split(/[-_]/)[0];
+
+			const psScript = `& { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; if ('${targetLangCode}') { foreach ($v in $synth.GetInstalledVoices()) { if ($v.VoiceInfo.Culture.TwoLetterISOLanguageName -eq '${targetLangCode}' -or $v.VoiceInfo.Culture.Name -like '${targetLangCode}*') { $synth.SelectVoice($v.VoiceInfo.Name); break; } } } $synth.SetOutputToWaveFile('${safeRawWavPath}'); $spokenText = [System.IO.File]::ReadAllText('${safeTextFilePath}', [System.Text.Encoding]::UTF8); if (![string]::IsNullOrWhiteSpace($spokenText)) { $synth.Speak($spokenText); } $synth.Dispose(); }`;
 			await execFileTracked("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
 				timeout: 45000,
 			});
@@ -982,6 +1000,8 @@ async function synthesizeSingleSegmentAudio(
 			}
 		} catch (psErr) {
 			console.warn("PowerShell TTS synthesis fallback triggered:", psErr);
+		} finally {
+			await fs.rm(tempTextFile, { force: true }).catch(() => undefined);
 		}
 	} else if (process.platform === "darwin") {
 		try {
@@ -1030,6 +1050,7 @@ export async function synthesizeDubbedSegments(
 	isSynthesisCancelled = false;
 	activeSynthesisAbortController = new AbortController();
 	const tempFiles: string[] = [];
+	let skippedCueCount = 0;
 
 	try {
 		const {
@@ -1134,74 +1155,104 @@ export async function synthesizeDubbedSegments(
 			);
 			tempFiles.push(rawSegPath, fittedSegPath);
 
+			let segmentReady = false;
+
 			if (!cue.text.trim()) {
 				// Empty speech cue: generate silence
 				const silBuf = createSilenceWavBuffer(windowMs / 1000);
 				await fs.writeFile(fittedSegPath, silBuf);
+				segmentReady = true;
 			} else {
-				await synthesizeSingleSegmentAudio(
-					cue.text,
-					rawSegPath,
-					{
-						backend,
-						provider,
-						apiKey,
-						refAudioBase64,
-						referenceTranscript,
-						quantization,
-						targetLanguage,
-						ffmpegPath,
-					},
-					activeSynthesisAbortController?.signal,
-				);
+				try {
+					await synthesizeSingleSegmentAudio(
+						cue.text,
+						rawSegPath,
+						{
+							backend,
+							provider,
+							apiKey,
+							refAudioBase64,
+							referenceTranscript,
+							quantization,
+							targetLanguage,
+							ffmpegPath,
+						},
+						activeSynthesisAbortController?.signal,
+					);
 
-				const rawDurationMs = await probeAudioDurationMs(rawSegPath);
-				const targetDur = rawDurationMs > 0 ? rawDurationMs : windowMs;
+					const stat = await fs.stat(rawSegPath).catch(() => null);
+					if (stat && stat.size > 100) {
+						const rawDurationMs = await probeAudioDurationMs(rawSegPath);
+						const targetDur = rawDurationMs > 0 ? rawDurationMs : windowMs;
 
-				// Apply gentle time-stretching if speech exceeds window
-				let tempo = 1.0;
-				if (targetDur > windowMs) {
-					const ratio = targetDur / windowMs;
-					tempo = Math.max(0.95, Math.min(1.15, ratio));
+						// Apply gentle time-stretching if speech exceeds window
+						let tempo = 1.0;
+						if (targetDur > windowMs) {
+							const ratio = targetDur / windowMs;
+							tempo = Math.max(0.95, Math.min(1.15, ratio));
+						}
+
+						if (Math.abs(tempo - 1.0) > 0.02) {
+							onProgress?.({
+								currentCue: cueNumber,
+								totalCues,
+								stage: "fitting",
+								percent: cueProgressPercent,
+								detail: `Matching voice timing to video (Cue ${cueNumber})...`,
+							});
+							await execFileTracked(ffmpegPath, [
+								"-y",
+								"-i",
+								rawSegPath,
+								"-filter_complex",
+								`[0:a]atempo=${tempo.toFixed(4)},aresample=48000[outa]`,
+								"-map",
+								"[outa]",
+								"-ac",
+								"2",
+								"-c:a",
+								"pcm_s16le",
+								fittedSegPath,
+							]);
+						} else {
+							await execFileTracked(ffmpegPath, [
+								"-y",
+								"-i",
+								rawSegPath,
+								"-filter_complex",
+								"[0:a]aresample=48000[outa]",
+								"-map",
+								"[outa]",
+								"-ac",
+								"2",
+								"-c:a",
+								"pcm_s16le",
+								fittedSegPath,
+							]);
+						}
+
+						const fittedStat = await fs.stat(fittedSegPath).catch(() => null);
+						if (fittedStat && fittedStat.size > 100) {
+							segmentReady = true;
+						}
+					}
+				} catch (cueErr) {
+					if (isSynthesisCancelled) {
+						throw cueErr;
+					}
+					console.warn(
+						`[Dubbing] Synthesis failed for cue ${i + 1} ("${cue.text.slice(0, 30)}..."):`,
+						cueErr,
+					);
 				}
 
-				if (Math.abs(tempo - 1.0) > 0.02) {
-					onProgress?.({
-						currentCue: cueNumber,
-						totalCues,
-						stage: "fitting",
-						percent: cueProgressPercent,
-						detail: `Matching voice timing to video (Cue ${cueNumber})...`,
-					});
-					await execFileTracked(ffmpegPath, [
-						"-y",
-						"-i",
-						rawSegPath,
-						"-filter_complex",
-						`[0:a]atempo=${tempo.toFixed(4)},aresample=48000[outa]`,
-						"-map",
-						"[outa]",
-						"-ac",
-						"2",
-						"-c:a",
-						"pcm_s16le",
-						fittedSegPath,
-					]);
-				} else {
-					await execFileTracked(ffmpegPath, [
-						"-y",
-						"-i",
-						rawSegPath,
-						"-filter_complex",
-						"[0:a]aresample=48000[outa]",
-						"-map",
-						"[outa]",
-						"-ac",
-						"2",
-						"-c:a",
-						"pcm_s16le",
-						fittedSegPath,
-					]);
+				if (!segmentReady) {
+					console.warn(
+						`[Dubbing] Using clean silence fallback for cue ${i + 1} ("${cue.text.slice(0, 30)}..."), window: ${windowMs}ms`,
+					);
+					const silBuf = createSilenceWavBuffer(windowMs / 1000);
+					await fs.writeFile(fittedSegPath, silBuf);
+					skippedCueCount++;
 				}
 			}
 
@@ -1307,6 +1358,8 @@ export async function synthesizeDubbedSegments(
 			success: true,
 			dubbedAudioPath: masterDubbedAudioPath,
 			durationMs: finalDurationMs || currentTimelineMs,
+			skippedCueCount,
+			totalCues: sortedCues.length,
 		};
 	} catch (error) {
 		if (isSynthesisCancelled) {
