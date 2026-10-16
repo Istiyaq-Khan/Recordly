@@ -8,6 +8,7 @@ vi.mock("electron", () => ({
 
 vi.mock("../ffmpeg/binary", () => ({
 	getFfprobeBinaryPath: () => "/mock/ffprobe",
+	getFfmpegBinaryPath: () => "/mock/ffmpeg",
 }));
 
 vi.mock("./storage", () => ({
@@ -19,7 +20,10 @@ import {
 	cancelDubbingSynthesis,
 	cancelTtsModelDownload,
 	checkLocalDubbingEngineStatus,
+	checkLocalFishServerHealth,
+	createFishAudioVoiceModel,
 	createSilenceWavBuffer,
+	DEFAULT_LOCAL_FISH_URL,
 	deleteTtsModel,
 	FISH_TTS_MODEL_CONFIGS,
 	FISH_TTS_TOKENIZER_CONFIG,
@@ -187,5 +191,111 @@ describe("Fish Audio S2-Pro Engine", () => {
 		const cancelRes = await cancelDubbingSynthesis();
 		expect(cancelRes.success).toBe(true);
 		expect(cancelRes.canceled).toBe(true);
+	});
+
+	it("pre-flight offline check returns error immediately when local server is unreachable", async () => {
+		globalThis.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+
+		const health = await checkLocalFishServerHealth("http://127.0.0.1:8080");
+		expect(health.ok).toBe(false);
+		expect(health.error).toContain("Local Fish Audio S2-Pro server is not running at http://127.0.0.1:8080");
+
+		const result = await synthesizeDubbedSegments({
+			cues: [{ id: "cue-1", text: "Testing local offline", startMs: 0, endMs: 2000 }],
+			referenceAudioPath: "/fake/ref.wav",
+			backend: "local",
+			localServerUrl: "http://127.0.0.1:8080",
+		});
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Local Fish Audio S2-Pro server is not running at http://127.0.0.1:8080");
+	});
+
+	it("creates ephemeral voice model once and passes reference_id to cue synthesis calls", async () => {
+		const fakeAudio = Buffer.from("RIFFfakeaudioWAVE");
+		vi.mocked(getSecureApiKey).mockReturnValue("fish_test_key_123");
+
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+			if (url === "https://api.fish.audio/model") {
+				return {
+					ok: true,
+					status: 201,
+					json: async () => ({ _id: "model_ephemeral_999" }),
+				} as Response;
+			}
+			if (url === "https://api.fish.audio/v1/tts") {
+				return {
+					ok: true,
+					headers: new Headers({ "content-type": "audio/wav" }),
+					arrayBuffer: async () => fakeAudio.buffer,
+				} as Response;
+			}
+			return { ok: false, status: 404 } as Response;
+		});
+
+		const modelId = await createFishAudioVoiceModel({
+			apiKey: "fish_test_key_123",
+			audioBuffer: fakeAudio,
+			transcript: "Sample transcript",
+		});
+		expect(modelId).toBe("model_ephemeral_999");
+	});
+
+	it("falls back to direct Base64 references if ephemeral model creation fails", async () => {
+		const fakeAudio = Buffer.from("RIFFfakeaudioWAVE");
+
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+			if (url === "https://api.fish.audio/model") {
+				return {
+					ok: false,
+					status: 403,
+					text: async () => "Permission denied",
+				} as Response;
+			}
+			return { ok: false, status: 404 } as Response;
+		});
+
+		const modelId = await createFishAudioVoiceModel({
+			apiKey: "fish_test_key_123",
+			audioBuffer: fakeAudio,
+		});
+		expect(modelId).toBeNull();
+	});
+
+	it("fails fast and creates zero silent fallbacks when cue synthesis errors", async () => {
+		vi.mocked(getSecureApiKey).mockReturnValue("fish_test_key_123");
+
+		// Simulate API 500 error for cue synthesis
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+			if (url === "https://api.fish.audio/model") {
+				return {
+					ok: true,
+					status: 201,
+					json: async () => ({ _id: "model_123" }),
+				} as Response;
+			}
+			if (url === "https://api.fish.audio/v1/tts") {
+				return {
+					ok: false,
+					status: 500,
+					text: async () => "Internal GPU inference failure",
+				} as Response;
+			}
+			return { ok: false, status: 404 } as Response;
+		});
+
+		const result = await synthesizeDubbedSegments({
+			cues: [
+				{ id: "cue-1", text: "Cue one that will fail", startMs: 0, endMs: 2000 },
+				{ id: "cue-2", text: "Cue two that should never be reached", startMs: 2000, endMs: 4000 },
+			],
+			referenceAudioPath: "/fake/ref.wav",
+			backend: "cloud",
+			provider: "fish-audio",
+		});
+
+		// Must fail fast, NOT substitute silence, NOT return success
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("Fish Audio API error (500)");
+		expect(result.dubbedAudioPath).toBeUndefined();
 	});
 });

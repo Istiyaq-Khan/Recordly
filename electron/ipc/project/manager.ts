@@ -82,10 +82,15 @@ export function isAllowedLocalReadPath(candidatePath: string) {
 
 	const isApproved = (checkPath: string) => {
 		if (approvedLocalReadPaths.has(checkPath)) return true;
-		if (process.platform === "win32") {
-			const lower = checkPath.toLowerCase();
-			for (const approved of approvedLocalReadPaths) {
+		const lower = process.platform === "win32" ? checkPath.toLowerCase() : checkPath;
+		for (const approved of approvedLocalReadPaths) {
+			if (process.platform === "win32") {
 				if (approved.toLowerCase() === lower) return true;
+			} else {
+				if (approved === checkPath) return true;
+			}
+			if (isPathInsideDirectory(checkPath, approved)) {
+				return true;
 			}
 		}
 		return false;
@@ -608,12 +613,16 @@ export async function loadProjectFromPath(projectPath: string) {
 	if (mediaSources.videoPath) {
 		const baseName = mediaSources.videoPath.replace(/\.[^.]+$/u, "");
 		approvedProjectPaths.push(
+			path.dirname(mediaSources.videoPath),
 			`${baseName}.mic.wav`,
 			`${baseName}.system.wav`,
 			`${baseName}.mic.m4a`,
 			`${baseName}.system.m4a`,
+			`${baseName}.mic.webm`,
+			`${baseName}.system.webm`,
 		);
 	}
+	approvedProjectPaths.push(path.dirname(normalizedPath));
 	await replaceApprovedSessionLocalReadPaths(approvedProjectPaths);
 	await rememberRecentProject(normalizedPath);
 

@@ -524,6 +524,90 @@ export async function applyAudioTimePaddingAndAlignment(
 	}
 }
 
+export const DEFAULT_LOCAL_FISH_URL = "http://127.0.0.1:8080";
+
+export async function checkLocalFishServerHealth(
+	endpointUrl = DEFAULT_LOCAL_FISH_URL,
+): Promise<{ ok: boolean; error?: string }> {
+	const trimmedUrl = (endpointUrl || DEFAULT_LOCAL_FISH_URL).replace(/\/+$/u, "");
+	try {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+		let response: Response;
+		try {
+			response = await fetch(`${trimmedUrl}/v1/models`, {
+				method: "GET",
+				signal: controller.signal,
+			});
+		} catch {
+			response = await fetch(`${trimmedUrl}/`, {
+				method: "GET",
+				signal: controller.signal,
+			});
+		} finally {
+			clearTimeout(timeoutId);
+		}
+
+		if (response.status < 500) {
+			return { ok: true };
+		}
+		return {
+			ok: false,
+			error: `Local Fish Audio S2-Pro server is not running at ${trimmedUrl}. Please start your local S2-Pro server (python tools/api_server.py --listen 127.0.0.1:8080) or switch to Cloud API.`,
+		};
+	} catch {
+		return {
+			ok: false,
+			error: `Local Fish Audio S2-Pro server is not running at ${trimmedUrl}. Please start your local S2-Pro server (python tools/api_server.py --listen 127.0.0.1:8080) or switch to Cloud API.`,
+		};
+	}
+}
+
+export async function createFishAudioVoiceModel(options: {
+	apiKey: string;
+	audioBuffer: Buffer;
+	transcript?: string;
+	model?: string;
+	signal?: AbortSignal;
+}): Promise<string | null> {
+	try {
+		const { apiKey, audioBuffer, transcript, model = "s2-pro", signal } = options;
+		const formData = new FormData();
+		formData.append("type", "tts");
+		formData.append("title", "Recordly Voice Clone");
+		formData.append("train_mode", "fast");
+		formData.append("visibility", "private");
+		const blob = new Blob([new Uint8Array(audioBuffer)], { type: "audio/wav" });
+		formData.append("voices", blob, "reference.wav");
+		if (transcript && transcript.trim()) {
+			formData.append("texts", transcript.trim());
+		}
+
+		const response = await fetch("https://api.fish.audio/model", {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				model,
+			},
+			body: formData,
+			signal,
+		});
+
+		if (!response.ok) {
+			const errText = await response.text().catch(() => "");
+			console.warn(`Fish Audio POST /model failed (${response.status}): ${errText}`);
+			return null;
+		}
+
+		const data = (await response.json()) as { _id?: string; id?: string };
+		return data._id || data.id || null;
+	} catch (err) {
+		console.warn("Failed to create ephemeral Fish Audio voice model:", err);
+		return null;
+	}
+}
+
 export async function synthesizeAudioWithApi(
 	options: SynthesizeApiOptions,
 ): Promise<SynthesizeResult> {
@@ -572,6 +656,7 @@ export async function synthesizeAudioWithApi(
 		const outputPath = path.join(DUBBING_CACHE_DIR, outputFilename);
 
 		if (provider === "fish-audio") {
+			const fishCloudModel = options.fishCloudModel || "s2-pro";
 			// Official Fish Audio API Endpoint
 			// POST https://api.fish.audio/v1/tts
 			const response = await fetch("https://api.fish.audio/v1/tts", {
@@ -579,6 +664,7 @@ export async function synthesizeAudioWithApi(
 				headers: {
 					Authorization: `Bearer ${apiKey}`,
 					"Content-Type": "application/json",
+					model: fishCloudModel,
 				},
 				body: JSON.stringify({
 					text,
@@ -614,6 +700,7 @@ export async function synthesizeAudioWithApi(
 			}
 
 			const durationMs = await probeAudioDurationMs(finalOutputPath);
+			await rememberApprovedLocalReadPath(finalOutputPath);
 
 			return {
 				success: true,
@@ -712,20 +799,20 @@ export async function synthesizeAudioWithLocalEngine(
 			text,
 			referenceAudioPath,
 			referenceTranscript,
-			quantization = "q4_k_m",
 			cueStartMs,
 			totalDurationMs,
+			localServerUrl = DEFAULT_LOCAL_FISH_URL,
 		} = options;
 		if (!text.trim()) {
 			return { success: false, error: "No text provided for synthesis" };
 		}
 		await fs.mkdir(DUBBING_CACHE_DIR, { recursive: true });
 
-		const status = await checkLocalDubbingEngineStatus();
-		if (!status.installed) {
+		const health = await checkLocalFishServerHealth(localServerUrl);
+		if (!health.ok) {
 			return {
 				success: false,
-				error: "Local Fish Audio S2-Pro weights not found. Please download model weights in the Dubbing panel or use Cloud API mode.",
+				error: health.error,
 			};
 		}
 
@@ -736,83 +823,74 @@ export async function synthesizeAudioWithLocalEngine(
 			};
 		}
 
+		let refAudioBase64 = "";
+		try {
+			const refBuffer = await fs.readFile(referenceAudioPath);
+			refAudioBase64 = refBuffer.toString("base64");
+		} catch (readErr) {
+			console.warn("Could not read reference audio file:", readErr);
+		}
+
 		const outputFilename = `dubbed_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.wav`;
 		const outputPath = path.join(DUBBING_CACHE_DIR, outputFilename);
-		const rawSpeechWav = path.join(
-			DUBBING_CACHE_DIR,
-			`speech_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.wav`,
-		);
-		const ffmpegPath = getFfmpegBinaryPath();
-		void quantization;
-		void referenceTranscript;
 
-		// Calculate approximate speech duration based on word count (approx 150 words per minute ~ 2.5 words/sec)
-		const words = text.trim().split(/\s+/).filter(Boolean);
-		const estimatedDurationSec = Math.max(1.5, words.length * 0.42);
+		const trimmedUrl = (localServerUrl || DEFAULT_LOCAL_FISH_URL).replace(/\/+$/u, "");
+		const ttsEndpoint = `${trimmedUrl}/v1/tts`;
+		const localPayload = {
+			text,
+			references: refAudioBase64
+				? [
+						{
+							audio: refAudioBase64,
+							text: referenceTranscript || "",
+						},
+					]
+				: [],
+			reference_id: null,
+			format: "wav",
+			max_new_tokens: 1024,
+			chunk_length: 200,
+			top_p: 0.7,
+			repetition_penalty: 1.2,
+			temperature: 0.7,
+			streaming: false,
+			use_memory_cache: "on",
+		};
 
-		// Offline local voice synthesizer:
-		// Synthesizes speech text directly without looping the 10-second reference voice sample.
-		let speechGenerated = false;
+		let response = await fetch(ttsEndpoint, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(localPayload),
+		}).catch(() => null);
 
-		// 1. Attempt platform speech synthesis
-		if (process.platform === "win32") {
-			const tempTextFile = path.join(
-				DUBBING_CACHE_DIR,
-				`temp_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.txt`,
-			);
-			try {
-				await fs.writeFile(tempTextFile, text, "utf8");
-				const safeTextFilePath = tempTextFile.replace(/'/g, "''");
-				const safeRawWavPath = rawSpeechWav.replace(/'/g, "''");
-				const targetLangCode = (options.targetLanguage || "").toLowerCase().split(/[-_]/)[0];
-
-				const psScript = `& { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; if ('${targetLangCode}') { foreach ($v in $synth.GetInstalledVoices()) { if ($v.VoiceInfo.Culture.TwoLetterISOLanguageName -eq '${targetLangCode}' -or $v.VoiceInfo.Culture.Name -like '${targetLangCode}*') { $synth.SelectVoice($v.VoiceInfo.Name); break; } } } $synth.SetOutputToWaveFile('${safeRawWavPath}'); $spokenText = [System.IO.File]::ReadAllText('${safeTextFilePath}', [System.Text.Encoding]::UTF8); if (![string]::IsNullOrWhiteSpace($spokenText)) { $synth.Speak($spokenText); } $synth.Dispose(); }`;
-				await execFileAsync("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
-					timeout: 45000,
-				});
-				const stat = await fs.stat(rawSpeechWav).catch(() => null);
-				if (stat && stat.size > 100) {
-					speechGenerated = true;
-				}
-			} catch (psErr) {
-				console.warn("PowerShell TTS synthesis fallback triggered:", psErr);
-			} finally {
-				await fs.rm(tempTextFile, { force: true }).catch(() => undefined);
-			}
-		} else if (process.platform === "darwin") {
-			try {
-				const aiffPath = `${rawSpeechWav}.aiff`;
-				await execFileAsync("say", ["-o", aiffPath, text], { timeout: 30000 });
-				await execFileAsync(ffmpegPath, ["-y", "-i", aiffPath, "-c:a", "pcm_s16le", rawSpeechWav]);
-				await fs.rm(aiffPath, { force: true }).catch(() => undefined);
-				speechGenerated = true;
-			} catch (darwinErr) {
-				console.warn("Darwin say TTS fallback triggered:", darwinErr);
-			}
+		if (!response || response.status === 404) {
+			const openaiEndpoint = `${trimmedUrl}/v1/audio/speech`;
+			const openaiPayload = {
+				model: "fishaudio/s2-pro",
+				input: text,
+				voice: "default",
+				response_format: "wav",
+				ref_audio: refAudioBase64 ? `data:audio/wav;base64,${refAudioBase64}` : undefined,
+				ref_text: referenceTranscript || "",
+			};
+			response = await fetch(openaiEndpoint, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(openaiPayload),
+			}).catch(() => null);
 		}
 
-		if (speechGenerated) {
-			// Process generated speech with audio normalization / resample filter
-			await execFileAsync(ffmpegPath, [
-				"-y",
-				"-i",
-				rawSpeechWav,
-				"-filter_complex",
-				"[0:a]aresample=24000,highpass=f=80,lowpass=f=7500,volume=1.1[outa]",
-				"-map",
-				"[outa]",
-				"-c:a",
-				"pcm_s16le",
-				outputPath,
-			]);
-			await fs.rm(rawSpeechWav, { force: true }).catch(() => undefined);
-		} else {
+		if (!response || !response.ok) {
+			const errBody = response ? await response.text().catch(() => "") : "Server unreachable";
+			const status = response ? response.status : "connection failed";
 			throw new Error(
-				`Failed to synthesize speech for text: "${text.slice(0, 40)}...". Please ensure your TTS provider/model is properly configured.`,
+				`Local Fish Audio S2-Pro inference error (${status}): ${errBody || "Could not synthesize audio."}`,
 			);
 		}
 
-		// Apply time padding and timeline cue alignment if duration parameters were provided
+		const arrayBuffer = await response.arrayBuffer();
+		await fs.writeFile(outputPath, Buffer.from(arrayBuffer));
+
 		let finalOutputPath = outputPath;
 		if ((cueStartMs && cueStartMs > 0) || (totalDurationMs && totalDurationMs > 0)) {
 			finalOutputPath = await applyAudioTimePaddingAndAlignment(outputPath, {
@@ -827,7 +905,7 @@ export async function synthesizeAudioWithLocalEngine(
 		return {
 			success: true,
 			dubbedAudioPath: finalOutputPath,
-			durationMs: durationMs || Math.round(estimatedDurationSec * 1000),
+			durationMs: durationMs || 0,
 		};
 	} catch (error) {
 		console.error("Local audio synthesis failed:", error);
@@ -880,8 +958,11 @@ async function synthesizeSingleSegmentAudio(
 		apiKey?: string;
 		refAudioBase64?: string;
 		referenceTranscript?: string;
+		referenceId?: string | null;
 		quantization?: TtsQuantization;
 		targetLanguage?: string;
+		localServerUrl?: string;
+		fishCloudModel?: "s2-pro" | "s2.1-pro" | "s2.1-pro-free";
 		ffmpegPath: string;
 	},
 	signal?: AbortSignal,
@@ -889,26 +970,42 @@ async function synthesizeSingleSegmentAudio(
 	if (options.backend === "cloud") {
 		const provider = options.provider ?? "fish-audio";
 		if (provider === "fish-audio") {
+			const fishCloudModel = options.fishCloudModel || "s2-pro";
+			const reqBody = options.referenceId
+				? {
+						text,
+						reference_id: options.referenceId,
+						format: "wav",
+						sample_rate: 44100,
+						latency: "normal",
+						temperature: 0.7,
+						top_p: 0.7,
+						repetition_penalty: 1.2,
+						normalize: true,
+					}
+				: {
+						text,
+						references: options.refAudioBase64
+							? [
+									{
+										audio: options.refAudioBase64,
+										text: options.referenceTranscript || "",
+									},
+								]
+							: [],
+						format: "wav",
+						latency: "normal",
+						normalize: true,
+					};
+
 			const response = await fetch("https://api.fish.audio/v1/tts", {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${options.apiKey}`,
 					"Content-Type": "application/json",
+					model: fishCloudModel,
 				},
-				body: JSON.stringify({
-					text,
-					references: options.refAudioBase64
-						? [
-								{
-									audio: options.refAudioBase64,
-									text: options.referenceTranscript || "",
-								},
-							]
-						: [],
-					format: "wav",
-					latency: "normal",
-					normalize: true,
-				}),
+				body: JSON.stringify(reqBody),
 				signal,
 			});
 
@@ -975,72 +1072,70 @@ async function synthesizeSingleSegmentAudio(
 		throw new Error(`Unsupported cloud provider: ${provider}`);
 	}
 
-	// Local Engine fallback
-	const rawSpeechWav = `${outputPath}.raw.wav`;
-	let speechGenerated = false;
+	// Local Engine: real HTTP inference server call
+	const localServerUrl = (options.localServerUrl || DEFAULT_LOCAL_FISH_URL).replace(/\/+$/u, "");
+	const ttsEndpoint = `${localServerUrl}/v1/tts`;
+	const localPayload = {
+		text,
+		references: options.refAudioBase64
+			? [
+					{
+						audio: options.refAudioBase64,
+						text: options.referenceTranscript || "",
+					},
+				]
+			: [],
+		reference_id: null,
+		format: "wav",
+		max_new_tokens: 1024,
+		chunk_length: 200,
+		top_p: 0.7,
+		repetition_penalty: 1.2,
+		temperature: 0.7,
+		streaming: false,
+		use_memory_cache: "on",
+	};
 
-	if (process.platform === "win32") {
-		const tempTextFile = path.join(
-			DUBBING_CACHE_DIR,
-			`temp_cue_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.txt`,
-		);
-		try {
-			await fs.writeFile(tempTextFile, text, "utf8");
-			const safeTextFilePath = tempTextFile.replace(/'/g, "''");
-			const safeRawWavPath = rawSpeechWav.replace(/'/g, "''");
-			const targetLangCode = (options.targetLanguage || "").toLowerCase().split(/[-_]/)[0];
+	let response = await fetch(ttsEndpoint, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(localPayload),
+		signal,
+	}).catch(() => null);
 
-			const psScript = `& { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; if ('${targetLangCode}') { foreach ($v in $synth.GetInstalledVoices()) { if ($v.VoiceInfo.Culture.TwoLetterISOLanguageName -eq '${targetLangCode}' -or $v.VoiceInfo.Culture.Name -like '${targetLangCode}*') { $synth.SelectVoice($v.VoiceInfo.Name); break; } } } $synth.SetOutputToWaveFile('${safeRawWavPath}'); $spokenText = [System.IO.File]::ReadAllText('${safeTextFilePath}', [System.Text.Encoding]::UTF8); if (![string]::IsNullOrWhiteSpace($spokenText)) { $synth.Speak($spokenText); } $synth.Dispose(); }`;
-			await execFileTracked("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
-				timeout: 45000,
-			});
-			const stat = await fs.stat(rawSpeechWav).catch(() => null);
-			if (stat && stat.size > 100) {
-				speechGenerated = true;
-			}
-		} catch (psErr) {
-			console.warn("PowerShell TTS synthesis fallback triggered:", psErr);
-		} finally {
-			await fs.rm(tempTextFile, { force: true }).catch(() => undefined);
-		}
-	} else if (process.platform === "darwin") {
-		try {
-			const aiffPath = `${rawSpeechWav}.aiff`;
-			await execFileTracked("say", ["-o", aiffPath, text], { timeout: 30000 });
-			await execFileTracked(options.ffmpegPath, [
-				"-y",
-				"-i",
-				aiffPath,
-				"-c:a",
-				"pcm_s16le",
-				rawSpeechWav,
-			]);
-			await fs.rm(aiffPath, { force: true }).catch(() => undefined);
-			speechGenerated = true;
-		} catch (darwinErr) {
-			console.warn("Darwin say TTS fallback triggered:", darwinErr);
-		}
+	if (!response || response.status === 404) {
+		const openaiEndpoint = `${localServerUrl}/v1/audio/speech`;
+		const openaiPayload = {
+			model: "fishaudio/s2-pro",
+			input: text,
+			voice: "default",
+			response_format: "wav",
+			ref_audio: options.refAudioBase64 ? `data:audio/wav;base64,${options.refAudioBase64}` : undefined,
+			ref_text: options.referenceTranscript || "",
+		};
+
+		response = await fetch(openaiEndpoint, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(openaiPayload),
+			signal,
+		}).catch(() => null);
 	}
 
-	if (speechGenerated) {
-		await execFileTracked(options.ffmpegPath, [
-			"-y",
-			"-i",
-			rawSpeechWav,
-			"-filter_complex",
-			"[0:a]aresample=48000,highpass=f=80,lowpass=f=7500,volume=1.1[outa]",
-			"-map",
-			"[outa]",
-			"-c:a",
-			"pcm_s16le",
-			outputPath,
-		]);
-		await fs.rm(rawSpeechWav, { force: true }).catch(() => undefined);
-	} else {
+	if (!response || !response.ok) {
+		const errBody = response ? await response.text().catch(() => "") : "Server unreachable";
+		const status = response ? response.status : "connection failed";
 		throw new Error(
-			`Failed to synthesize speech for cue text: "${text.slice(0, 40)}...". Please ensure your TTS provider/model is properly configured.`,
+			`Local Fish Audio S2-Pro inference error (${status}): ${errBody || "Could not synthesize audio segment."}`,
 		);
 	}
+
+	const arrayBuffer = await response.arrayBuffer();
+	await fs.writeFile(outputPath, Buffer.from(arrayBuffer));
 }
 
 export async function synthesizeDubbedSegments(
@@ -1050,7 +1145,6 @@ export async function synthesizeDubbedSegments(
 	isSynthesisCancelled = false;
 	activeSynthesisAbortController = new AbortController();
 	const tempFiles: string[] = [];
-	let skippedCueCount = 0;
 
 	try {
 		const {
@@ -1062,6 +1156,8 @@ export async function synthesizeDubbedSegments(
 			quantization = "q4_k_m",
 			targetLanguage,
 			totalDurationMs,
+			localServerUrl = DEFAULT_LOCAL_FISH_URL,
+			fishCloudModel = "s2-pro",
 		} = options;
 
 		if (!cues || cues.length === 0) {
@@ -1080,11 +1176,11 @@ export async function synthesizeDubbedSegments(
 				};
 			}
 		} else {
-			const status = await checkLocalDubbingEngineStatus();
-			if (!status.installed) {
+			const health = await checkLocalFishServerHealth(localServerUrl);
+			if (!health.ok) {
 				return {
 					success: false,
-					error: "Local Fish Audio S2-Pro weights not found. Please download model weights in the Dubbing panel or use Cloud API mode.",
+					error: health.error,
 				};
 			}
 		}
@@ -1092,10 +1188,11 @@ export async function synthesizeDubbedSegments(
 		await fs.mkdir(DUBBING_CACHE_DIR, { recursive: true });
 
 		let refAudioBase64 = "";
+		let refAudioBuffer: Buffer | null = null;
 		if (referenceAudioPath) {
 			try {
-				const refBuffer = await fs.readFile(referenceAudioPath);
-				refAudioBase64 = refBuffer.toString("base64");
+				refAudioBuffer = await fs.readFile(referenceAudioPath);
+				refAudioBase64 = refAudioBuffer.toString("base64");
 			} catch (readErr) {
 				console.warn("Could not read reference audio file:", readErr);
 			}
@@ -1106,6 +1203,25 @@ export async function synthesizeDubbedSegments(
 		const sortedCues = [...cues].sort((a, b) => a.startMs - b.startMs);
 		const concatParts: string[] = [];
 		let currentTimelineMs = 0;
+
+		// Pre-upload ephemeral voice model for Official Fish Audio Cloud API
+		let referenceId: string | null = null;
+		if (backend === "cloud" && provider === "fish-audio" && refAudioBuffer && refAudioBuffer.length > 0) {
+			onProgress?.({
+				currentCue: 0,
+				totalCues: sortedCues.length,
+				stage: "synthesizing",
+				percent: 15,
+				detail: "Preparing zero-shot voice clone model on Fish Audio...",
+			});
+			referenceId = await createFishAudioVoiceModel({
+				apiKey: apiKey!,
+				audioBuffer: refAudioBuffer,
+				transcript: referenceTranscript,
+				model: fishCloudModel,
+				signal: activeSynthesisAbortController?.signal,
+			});
+		}
 
 		// 1. Initial pre-speech silence from 0ms to first cue startMs
 		const firstCueStartMs = sortedCues[0].startMs;
@@ -1155,104 +1271,112 @@ export async function synthesizeDubbedSegments(
 			);
 			tempFiles.push(rawSegPath, fittedSegPath);
 
-			let segmentReady = false;
-
 			if (!cue.text.trim()) {
 				// Empty speech cue: generate silence
 				const silBuf = createSilenceWavBuffer(windowMs / 1000);
 				await fs.writeFile(fittedSegPath, silBuf);
-				segmentReady = true;
 			} else {
-				try {
-					await synthesizeSingleSegmentAudio(
-						cue.text,
-						rawSegPath,
-						{
-							backend,
-							provider,
-							apiKey,
-							refAudioBase64,
-							referenceTranscript,
-							quantization,
-							targetLanguage,
-							ffmpegPath,
-						},
-						activeSynthesisAbortController?.signal,
-					);
-
-					const stat = await fs.stat(rawSegPath).catch(() => null);
-					if (stat && stat.size > 100) {
-						const rawDurationMs = await probeAudioDurationMs(rawSegPath);
-						const targetDur = rawDurationMs > 0 ? rawDurationMs : windowMs;
-
-						// Apply gentle time-stretching if speech exceeds window
-						let tempo = 1.0;
-						if (targetDur > windowMs) {
-							const ratio = targetDur / windowMs;
-							tempo = Math.max(0.95, Math.min(1.15, ratio));
-						}
-
-						if (Math.abs(tempo - 1.0) > 0.02) {
-							onProgress?.({
-								currentCue: cueNumber,
-								totalCues,
-								stage: "fitting",
-								percent: cueProgressPercent,
-								detail: `Matching voice timing to video (Cue ${cueNumber})...`,
-							});
-							await execFileTracked(ffmpegPath, [
-								"-y",
-								"-i",
-								rawSegPath,
-								"-filter_complex",
-								`[0:a]atempo=${tempo.toFixed(4)},aresample=48000[outa]`,
-								"-map",
-								"[outa]",
-								"-ac",
-								"2",
-								"-c:a",
-								"pcm_s16le",
-								fittedSegPath,
-							]);
-						} else {
-							await execFileTracked(ffmpegPath, [
-								"-y",
-								"-i",
-								rawSegPath,
-								"-filter_complex",
-								"[0:a]aresample=48000[outa]",
-								"-map",
-								"[outa]",
-								"-ac",
-								"2",
-								"-c:a",
-								"pcm_s16le",
-								fittedSegPath,
-							]);
-						}
-
-						const fittedStat = await fs.stat(fittedSegPath).catch(() => null);
-						if (fittedStat && fittedStat.size > 100) {
-							segmentReady = true;
-						}
-					}
-				} catch (cueErr) {
+				let attempt = 0;
+				const maxRetries = 2;
+				while (true) {
 					if (isSynthesisCancelled) {
+						throw new Error("Dubbing synthesis was canceled.");
+					}
+					try {
+						await synthesizeSingleSegmentAudio(
+							cue.text,
+							rawSegPath,
+							{
+								backend,
+								provider,
+								apiKey,
+								refAudioBase64,
+								referenceTranscript,
+								referenceId,
+								quantization,
+								targetLanguage,
+								localServerUrl,
+								fishCloudModel,
+								ffmpegPath,
+							},
+							activeSynthesisAbortController?.signal,
+						);
+						break;
+					} catch (cueErr: unknown) {
+						if (isSynthesisCancelled) throw cueErr;
+						const errStr = cueErr instanceof Error ? cueErr.message : String(cueErr);
+						const isTransient = errStr.includes("429") || errStr.includes("503");
+						if (isTransient && attempt < maxRetries) {
+							attempt++;
+							await new Promise((r) => setTimeout(r, 1000 * attempt));
+							continue;
+						}
+						// Fail fast: do not substitute silence for spoken text!
 						throw cueErr;
 					}
-					console.warn(
-						`[Dubbing] Synthesis failed for cue ${i + 1} ("${cue.text.slice(0, 30)}..."):`,
-						cueErr,
+				}
+
+				const stat = await fs.stat(rawSegPath).catch(() => null);
+				if (!stat || stat.size <= 100) {
+					throw new Error(
+						`Synthesized audio for cue ${cueNumber} was empty or corrupted.`,
 					);
 				}
 
-				if (!segmentReady) {
-					console.warn(
-						`[Dubbing] Using clean silence fallback for cue ${i + 1} ("${cue.text.slice(0, 30)}..."), window: ${windowMs}ms`,
+				const rawDurationMs = await probeAudioDurationMs(rawSegPath);
+				const targetDur = rawDurationMs > 0 ? rawDurationMs : windowMs;
+
+				// Apply gentle time-stretching if speech exceeds window
+				let tempo = 1.0;
+				if (targetDur > windowMs) {
+					const ratio = targetDur / windowMs;
+					tempo = Math.max(0.95, Math.min(1.15, ratio));
+				}
+
+				if (Math.abs(tempo - 1.0) > 0.02) {
+					onProgress?.({
+						currentCue: cueNumber,
+						totalCues,
+						stage: "fitting",
+						percent: cueProgressPercent,
+						detail: `Matching voice timing to video (Cue ${cueNumber})...`,
+					});
+					await execFileTracked(ffmpegPath, [
+						"-y",
+						"-i",
+						rawSegPath,
+						"-filter_complex",
+						`[0:a]atempo=${tempo.toFixed(4)},aresample=48000[outa]`,
+						"-map",
+						"[outa]",
+						"-ac",
+						"2",
+						"-c:a",
+						"pcm_s16le",
+						fittedSegPath,
+					]);
+				} else {
+					await execFileTracked(ffmpegPath, [
+						"-y",
+						"-i",
+						rawSegPath,
+						"-filter_complex",
+						"[0:a]aresample=48000[outa]",
+						"-map",
+						"[outa]",
+						"-ac",
+						"2",
+						"-c:a",
+						"pcm_s16le",
+						fittedSegPath,
+					]);
+				}
+
+				const fittedStat = await fs.stat(fittedSegPath).catch(() => null);
+				if (!fittedStat || fittedStat.size <= 100) {
+					throw new Error(
+						`Fitted audio segment for cue ${cueNumber} was empty or corrupted.`,
 					);
-					const silBuf = createSilenceWavBuffer(windowMs / 1000);
-					await fs.writeFile(fittedSegPath, silBuf);
-					skippedCueCount++;
 				}
 			}
 
@@ -1358,7 +1482,7 @@ export async function synthesizeDubbedSegments(
 			success: true,
 			dubbedAudioPath: masterDubbedAudioPath,
 			durationMs: finalDurationMs || currentTimelineMs,
-			skippedCueCount,
+			skippedCueCount: 0,
 			totalCues: sortedCues.length,
 		};
 	} catch (error) {

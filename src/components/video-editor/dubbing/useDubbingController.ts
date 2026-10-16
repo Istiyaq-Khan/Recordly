@@ -11,7 +11,7 @@ import type {
 	DubbingTranslationEngine,
 	DubbingTtsBackend,
 } from "../types";
-import { SUPPORTED_DUBBING_LANGUAGES, type TtsQuantization } from "./constants";
+import type { TtsQuantization } from "./constants";
 
 interface UseDubbingControllerParams {
 	videoPath: string | null;
@@ -63,6 +63,7 @@ export function useDubbingController({
 	const [ttsBackend, setTtsBackend] = useState<DubbingTtsBackend>(
 		initialPreferences.current.dubbingTtsBackend ?? "cloud",
 	);
+	const [localServerUrl, setLocalServerUrl] = useState<string>("http://127.0.0.1:8080");
 	const [cloudProvider, setCloudProvider] = useState<DubbingCloudProvider>(
 		initialPreferences.current.dubbingCloudProvider ?? "fish-audio",
 	);
@@ -171,6 +172,10 @@ export function useDubbingController({
 	const updateTtsBackend = useCallback((backend: DubbingTtsBackend) => {
 		setTtsBackend(backend);
 		saveEditorPreferences({ dubbingTtsBackend: backend });
+	}, []);
+
+	const updateLocalServerUrl = useCallback((url: string) => {
+		setLocalServerUrl(url);
 	}, []);
 
 	const updateTtsQuantization = useCallback((quant: TtsQuantization) => {
@@ -908,13 +913,14 @@ export function useDubbingController({
 				quantization: ttsQuantization,
 				targetLanguage,
 				totalDurationMs,
+				localServerUrl,
 			});
 
 			if (!synthRes.success || !synthRes.dubbedAudioPath) {
 				if (synthRes.canceled) {
 					return;
 				}
-				throw new Error(synthRes.error ?? "Segment audio synthesis failed");
+				throw new Error(synthRes.error ?? "Dubbing synthesis failed");
 			}
 
 			const synthAudioPath = synthRes.dubbedAudioPath;
@@ -965,20 +971,7 @@ export function useDubbingController({
 			setGenerationProgress(100);
 			setSegmentCueProgress(null);
 
-			const selectedLangObj = SUPPORTED_DUBBING_LANGUAGES.find((l) => l.code === targetLanguage);
-			const langDisplayName = selectedLangObj?.name ?? targetLanguage.toUpperCase();
-
-			if (synthRes.skippedCueCount && synthRes.skippedCueCount >= segmentCues.length) {
-				toast.warning(
-					`Captions placed successfully. Local voice synthesis skipped for ${langDisplayName} (switch to Cloud API for multilingual voice cloning).`,
-				);
-			} else if (synthRes.skippedCueCount && synthRes.skippedCueCount > 0) {
-				toast.info(
-					`AI Dubbing generated with ${synthRes.skippedCueCount} silence fallback segment(s).`,
-				);
-			} else {
-				toast.success("AI Dubbing generated and synced to timeline!");
-			}
+			toast.success("AI Dubbing generated and synced to timeline!");
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : "Dubbing generation failed";
 			setGenerationStage("error");
@@ -999,8 +992,7 @@ export function useDubbingController({
 		ttsBackend,
 		cloudProvider,
 		ttsQuantization,
-		whisperExecutablePath,
-		whisperModelPath,
+		localServerUrl,
 		dubbingTrack,
 		setDubbingTrack,
 		setAutoCaptions,
@@ -1065,6 +1057,9 @@ export function useDubbingController({
 		updateTargetLanguage,
 		ttsBackend,
 		updateTtsBackend,
+		localServerUrl,
+		setLocalServerUrl,
+		updateLocalServerUrl,
 		cloudProvider,
 		updateCloudProvider,
 		translationEngine,

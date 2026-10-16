@@ -369,4 +369,43 @@ describe("local media path policy", () => {
 			code: "ENOENT",
 		});
 	});
+
+	it("approves external parent directory and companion audio (.system.m4a, .system.webm) when loading project", async () => {
+		const externalDir = path.join(tempRoot, "OBS records");
+		await fs.mkdir(externalDir, { recursive: true });
+		const videoPath = path.join(externalDir, "recording1.mp4");
+		const systemM4aPath = path.join(externalDir, "recording1.system.m4a");
+		const systemWebmPath = path.join(externalDir, "recording1.system.webm");
+		const projectPath = path.join(externalDir, "recording1.recordly");
+
+		await fs.writeFile(videoPath, "video-data");
+		await fs.writeFile(systemM4aPath, "audio-m4a-data");
+		await fs.writeFile(systemWebmPath, "audio-webm-data");
+		await fs.writeFile(
+			projectPath,
+			JSON.stringify({
+				version: 1,
+				videoPath,
+				editor: {},
+			}),
+			"utf-8",
+		);
+
+		const { loadProjectFromPath, isAllowedLocalMediaPath, resolveApprovedLocalMediaPath } =
+			await import("./manager");
+
+		const result = await loadProjectFromPath(projectPath);
+		expect(result.success).toBe(true);
+
+		// Companion tracks should now be allowed
+		await expect(isAllowedLocalMediaPath(systemM4aPath)).resolves.toBe(true);
+		await expect(isAllowedLocalMediaPath(systemWebmPath)).resolves.toBe(true);
+		await expect(resolveApprovedLocalMediaPath(systemM4aPath)).resolves.toBe(
+			await fs.realpath(systemM4aPath),
+		);
+		await expect(resolveApprovedLocalMediaPath(systemWebmPath)).resolves.toBe(
+			await fs.realpath(systemWebmPath),
+		);
+	});
 });
+

@@ -105,6 +105,7 @@ export interface SynthesizeApiOptions {
 	format?: "wav";
 	totalDurationMs?: number;
 	cueStartMs?: number;
+	fishCloudModel?: "s2-pro" | "s2.1-pro" | "s2.1-pro-free";
 }
 
 export interface SynthesizeLocalOptions {
@@ -115,6 +116,7 @@ export interface SynthesizeLocalOptions {
 	quantization?: TtsQuantization;
 	totalDurationMs?: number;
 	cueStartMs?: number;
+	localServerUrl?: string;
 }
 
 export interface SynthesizeResult {
@@ -154,6 +156,8 @@ export interface SynthesizeDubbedSegmentsOptions {
 	quantization?: TtsQuantization;
 	targetLanguage?: string;
 	totalDurationMs?: number;
+	localServerUrl?: string;
+	fishCloudModel?: "s2-pro" | "s2.1-pro" | "s2.1-pro-free";
 }
 
 export interface DubbingSegmentProgressPayload {

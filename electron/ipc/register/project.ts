@@ -808,10 +808,10 @@ export function registerProjectHandlers() {
 		"set-current-video-path",
 		async (
 			_,
-			path: string,
+			videoFilePath: string,
 			options?: { preserveProjectPath?: boolean; hideOverlayCursorByDefault?: boolean },
 		) => {
-			setCurrentVideoPath(normalizeVideoSourcePath(path) ?? path);
+			setCurrentVideoPath(normalizeVideoSourcePath(videoFilePath) ?? videoFilePath);
 			approveUserPath(currentVideoPath);
 			const resolvedSession = (await resolveRecordingSession(currentVideoPath)) ?? {
 				videoPath: currentVideoPath!,
@@ -832,11 +832,14 @@ export function registerProjectHandlers() {
 				: null;
 			await replaceApprovedSessionLocalReadPaths([
 				resolvedSession.videoPath,
+				resolvedSession.videoPath ? path.dirname(resolvedSession.videoPath) : null,
 				resolvedSession.webcamPath,
 				baseName ? `${baseName}.mic.wav` : null,
 				baseName ? `${baseName}.system.wav` : null,
 				baseName ? `${baseName}.mic.m4a` : null,
 				baseName ? `${baseName}.system.m4a` : null,
+				baseName ? `${baseName}.mic.webm` : null,
+				baseName ? `${baseName}.system.webm` : null,
 			]);
 
 			if (nextSession.webcamPath) {

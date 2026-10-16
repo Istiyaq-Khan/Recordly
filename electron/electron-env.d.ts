@@ -900,6 +900,7 @@ interface Window {
 			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
 			cueStartMs?: number;
 			totalDurationMs?: number;
+			localServerUrl?: string;
 		}) => Promise<{
 			success: boolean;
 			dubbedAudioPath?: string;
@@ -916,6 +917,8 @@ interface Window {
 			quantization?: "q4_k_m" | "q5_k_m" | "q6_k" | "q8_0" | "f16" | "fp16";
 			targetLanguage?: string;
 			totalDurationMs?: number;
+			localServerUrl?: string;
+			fishCloudModel?: "s2-pro" | "s2.1-pro" | "s2.1-pro-free";
 		}) => Promise<{
 			success: boolean;
 			dubbedAudioPath?: string;
